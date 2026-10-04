@@ -9,7 +9,7 @@ from ..providers.nexus import Nexus, NxmLink
 from .util import human_count, human_size, load_remote, run_async
 
 _CATEGORY = {"MAIN": "Principal", "OPTIONAL": "Opcional", "UPDATE": "Actualización", "MISCELLANEOUS": "Varios",
-             "OLD_VERSION": "Versión antigua", "ARCHIVED": "Archivado"}
+             "OLD_VERSION": "Versión antigua", "ARCHIVED": "Archivado", "REMOVED": "Retirado"}
 
 
 class ModDialog(Adw.Dialog):
@@ -86,8 +86,8 @@ class ModDialog(Adw.Dialog):
             self.summary.set_label(full.summary)
         self._show_requirements(full)
         self.files_group.remove(self.files_spinner)
-        current = [f for f in files if f.category not in ("OLD_VERSION", "ARCHIVED")]
-        old = [f for f in files if f.category in ("OLD_VERSION", "ARCHIVED")]
+        current = [f for f in files if f.category not in ("OLD_VERSION", "ARCHIVED", "REMOVED")]
+        old = [f for f in files if f.category in ("OLD_VERSION", "ARCHIVED", "REMOVED")]
         if not files:
             self.files_group.add(Adw.ActionRow(title="Este mod no tiene archivos disponibles"))
         for f in current:
@@ -149,7 +149,8 @@ class ModDialog(Adw.Dialog):
     def _open_download(self, f: FileInfo) -> None:
         # nmm=1 abre el diálogo de descarga «con gestor», que genera el enlace nxm://
         self._launch(Nexus.file_page(self.domain, self.info.mod_id, f.file_id) + "&nmm=1")
-        self.win.toast("En la web pulsa «Slow download»: Crisol recibirá el enlace y lo instalará.", 8)
+        self.win.wait_for_nxm(self.page.game, self.domain, self.info.mod_id, f.file_id, f.name or self.info.name)
+        self.close()
 
     def _launch(self, url: str) -> None:
         Gtk.UriLauncher.new(url).launch(self.win, None, None)

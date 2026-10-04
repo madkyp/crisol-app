@@ -226,6 +226,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.toasts.set_child(box)
         self.set_content(self.toasts)
         self._pending_nxm: list[str] = []
+        self._waiting: dict[tuple[str, int, int], Task] = {}
         self._scanned = False
         self._open_game = open_game
         for name, cb in (("prefs", self.show_prefs), ("rescan", lambda: self.rescan()), ("about", self.show_about)):
@@ -316,7 +317,27 @@ class MainWindow(Adw.ApplicationWindow):
                 game = page.game
         self.install_nxm(game, link)
 
+    def wait_for_nxm(self, game: Game, domain: str, mod_id: int, file_id: int, name: str) -> None:
+        """Aviso mientras el usuario completa la descarga en la web (sin Premium)."""
+        key = (domain, mod_id, file_id)
+        if key in self._waiting:
+            return
+        task = self.taskbar.add(f"Esperando a la web: pulsa «Slow download» para «{name}»", cancellable=True)
+        task.msg.set_label("el navegador pasará el enlace a Crisol")
+        self._waiting[key] = task
+
+        def check():
+            if task.cancel.is_set():
+                self._waiting.pop(key, None)
+                task.done()
+                return False
+            return key in self._waiting
+        GLib.timeout_add(500, check)
+
     def install_nxm(self, game: Game, link) -> None:
+        waiting = self._waiting.pop((link.domain, link.mod_id, link.file_id), None)
+        if waiting:
+            waiting.done()
         ctx = manager.context(game)
         task = self.taskbar.add(f"Descargando mod {link.mod_id} para {game.name}", cancellable=True)
 

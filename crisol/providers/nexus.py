@@ -238,7 +238,7 @@ class Nexus(ModProvider):
                         category=f.get("category") or "", size=int(f.get("sizeInBytes") or 0),
                         file_name=f.get("uri") or "", description=f.get("description") or "",
                         date=int(f.get("date") or 0)) for f in data.get("modFiles") or []]
-        rank = {"MAIN": 0, "UPDATE": 1, "OPTIONAL": 2, "MISCELLANEOUS": 3}
+        rank = {"MAIN": 0, "UPDATE": 1, "OPTIONAL": 2, "MISCELLANEOUS": 3}  # el resto (antiguos, retirados) al final
         out.sort(key=lambda f: (rank.get(f.category, 9), -f.date))
         return out
 
