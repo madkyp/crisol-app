@@ -39,6 +39,8 @@ class Mapping:
     packages: list[str] = field(default_factory=list)  # ME3
     natives: list[str] = field(default_factory=list)   # ME3
     savefile: str = ""
+    me3_variants: list[str] = field(default_factory=list)
+    me3_variant: str = ""
 
 
 def staged_files(staged: Path) -> list[str]:
@@ -417,6 +419,7 @@ class ME3Layout(Layout):
     order_hint = ("Los mods se escriben en el perfil de ME3 en el orden de la lista. El juego no se modifica: "
                   "«Aplicar» solo guarda el perfil.")
     external = True
+    preferred_profile = ""  # variante .me3 elegida para el mod que se está colocando
 
     def __init__(self, game_dir):
         super().__init__(game_dir)
@@ -439,7 +442,7 @@ class ME3Layout(Layout):
         files = staged_files(staged)
         if not files:
             raise LayoutError("El archivo del mod está vacío")
-        packages, natives, savefile = self._from_profile(staged, files)
+        packages, natives, savefile, variants, variant = self._from_profile(staged, files, self.preferred_profile)
         if not packages and not natives:
             dirs = sorted({str(PurePosixPath(f).parent) for f in files} | {str(a) for f in files
                           for a in PurePosixPath(f).parents}, key=lambda d: d.count("/"))
@@ -464,30 +467,41 @@ class ME3Layout(Layout):
                 if rel is not None:
                     mapped.append((f, rel))  # destino = ruta dentro del paquete (para ver conflictos)
                     break
-        return Mapping(mapped, [], packages=packages, natives=natives, savefile=savefile)
+        return Mapping(mapped, [], packages=packages, natives=natives, savefile=savefile,
+                       me3_variants=variants, me3_variant=variant)
 
     @staticmethod
-    def _from_profile(staged: Path, files: list[str]) -> tuple[list[str], list[str], str]:
-        """Si el mod trae su propio perfil .me3 (p. ej. The Convergence), se usan sus rutas."""
+    def _from_profile(staged: Path, files: list[str], preferred: str = ""):
+        """Si el mod trae sus perfiles .me3 (p. ej. The Convergence normal y Seamless Co-op), se usan sus
+        rutas. Solo cuentan los perfiles cuyos archivos existen; se usa el preferido si vale.
+        Devuelve (paquetes, nativas, partida, variantes, variante elegida)."""
         import tomllib
-        profiles = sorted((f for f in files if f.lower().endswith(".me3")), key=lambda f: ("seamless" in f.lower(), f))
-        if not profiles:
-            return [], [], ""
-        prof = staged / profiles[0]
-        try:
-            data = tomllib.loads(prof.read_text())
-        except (OSError, tomllib.TOMLDecodeError):
-            return [], [], ""
-
-        def rel(path: str) -> str | None:
-            p = (prof.parent / path).resolve()
+        staged_res = staged.resolve()
+        usable: dict[str, tuple] = {}
+        for f in sorted((f for f in files if f.lower().endswith(".me3")), key=lambda f: ("seamless" in f.lower(), f)):
+            prof = staged / f
             try:
-                return p.relative_to(staged.resolve()).as_posix()
-            except ValueError:
-                return None
-        packages = [r for r in (rel(x.get("path", "")) for x in data.get("package", [])) if r is not None]
-        natives = [r for r in (rel(x.get("path", "")) for x in data.get("natives", [])) if r]
-        return ["" if r == "." else r for r in packages], natives, str(data.get("savefile") or "")
+                data = tomllib.loads(prof.read_text())
+            except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+                continue
+
+            def rel(path: str, prof=prof):
+                p = (prof.parent / path).resolve()
+                try:
+                    return p.relative_to(staged_res).as_posix(), p.exists()
+                except ValueError:
+                    return None, False
+            pk = [rel(x.get("path", "")) for x in data.get("package", [])]
+            nt = [rel(x.get("path", "")) for x in data.get("natives", [])]
+            if not pk and not nt or not all(ok for _, ok in pk + nt):
+                continue  # el perfil apunta a archivos que no están (p. ej. Seamless Co-op sin instalar)
+            usable[PurePosixPath(f).stem] = (["" if r == "." else r for r, _ in pk], [r for r, _ in nt],
+                                              str(data.get("savefile") or ""))
+        if not usable:
+            return [], [], "", [], ""
+        name = preferred if preferred in usable else next(iter(usable))
+        packages, natives, save = usable[name]
+        return packages, natives, save, list(usable), name
 
     def find_me3(self, staging_dirs: list[Path]) -> Path | None:
         """me3 del sistema o el que trae algún mod instalado (The Convergence lo incluye)."""

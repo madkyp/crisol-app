@@ -238,6 +238,7 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
         raise
     layout = LAYOUTS[layout_id](ctx.game.install_dir) if layout_id else ctx.layout
     layout.keep_docs = bool(rec.fomod_name)
+    layout.preferred_profile = rec.me3_variant
     try:
         mapping = layout.map_files(tmp, rec.name)
     except LayoutError:
@@ -250,6 +251,7 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     rec.skipped = mapping.skipped
     rec.folders = mapping.folders
     rec.packages, rec.natives, rec.savefile = mapping.packages, mapping.natives, mapping.savefile
+    rec.me3_variants, rec.me3_variant = mapping.me3_variants, mapping.me3_variant
     rec.layout = layout.id
     rec.archive = str(archive_path)
     rec.staged_size = dir_size(final)
@@ -444,7 +446,13 @@ def me3_command(ctx: GameContext) -> list[str] | None:
     me3 = layout.find_me3([ctx.state.staging(m.uid) for m in ctx.state.mods.values()])
     if not me3:
         return None
-    return [str(me3), "launch", "--game", layout.me3_game, "-p", str(ctx.me3_profile)]
+    cmd = [str(me3), "launch", "--game", layout.me3_game, "-p", str(ctx.me3_profile)]
+    opts = ctx.state.me3_opts
+    if opts.get("skip_logos"):
+        cmd += ["--show-logos", "false"]
+    if opts.get("no_boot_boost"):
+        cmd += ["--no-boot-boost", "true"]
+    return cmd
 
 
 def restore(ctx: GameContext, progress: Progress | None = None) -> Report:
@@ -483,6 +491,7 @@ def remap(ctx: GameContext) -> list[str]:
     failed = []
     for m in ctx.state.mods.values():
         layout.keep_docs = bool(m.fomod_name)
+        layout.preferred_profile = m.me3_variant
         try:
             mp = layout.map_files(ctx.state.staging(m.uid), m.name)
         except LayoutError:
@@ -490,6 +499,7 @@ def remap(ctx: GameContext) -> list[str]:
             continue
         m.files, m.skipped, m.folders, m.layout = [list(x) for x in mp.files], mp.skipped, mp.folders, layout.id
         m.packages, m.natives, m.savefile = mp.packages, mp.natives, mp.savefile
+        m.me3_variants, m.me3_variant = mp.me3_variants, mp.me3_variant
     ctx.state.dirty_deploy = True
     ctx.state.save()
     return failed

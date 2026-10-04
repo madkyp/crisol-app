@@ -36,6 +36,8 @@ class ModRecord:
     packages: list[str] = field(default_factory=list)      # ME3: carpetas de paquete (en staging)
     natives: list[str] = field(default_factory=list)       # ME3: DLL nativas (en staging)
     savefile: str = ""                                     # ME3: partida aparte que pide el mod
+    me3_variants: list[str] = field(default_factory=list)  # ME3: perfiles .me3 que trae el mod y se pueden usar
+    me3_variant: str = ""                                  # ME3: el elegido
     requirements: list[dict] = field(default_factory=list)
     latest_version: str = ""
     verified: str = ""           # "md5" | "size" | "" (cómo se comprobó la descarga)
@@ -76,6 +78,7 @@ class GameState:
         self.active: str = raw.get("active") if raw.get("active") in self.profiles else next(iter(self.profiles))
         self.dirty_deploy: bool = bool(raw.get("dirty_deploy"))
         self.updates_checked: float = float(raw.get("updates_checked") or 0)
+        self.me3_opts: dict = raw.get("me3_opts") or {}
         self._repair()
 
     def _repair(self) -> None:
@@ -92,6 +95,7 @@ class GameState:
             "mods": {u: asdict(m) for u, m in self.mods.items()},
             "profiles": {n: asdict(p) for n, p in self.profiles.items()},
             "active": self.active, "dirty_deploy": self.dirty_deploy, "updates_checked": self.updates_checked,
+            "me3_opts": self.me3_opts,
         })
 
     # ---------- mods ----------

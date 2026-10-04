@@ -1101,7 +1101,41 @@ class GameSettingsDialog(Adw.PreferencesDialog):
             r.add_css_class("property")
             g2.add(r)
         pg.add(g2)
+        if page.ctx.layout.external:
+            pg.add(self._me3_group())
         self.add(pg)
+
+    def _me3_group(self) -> Adw.PreferencesGroup:
+        st = self.page.ctx.state
+        g = Adw.PreferencesGroup(title="Mod Engine 3",
+                                 description="Opciones al lanzar el juego con ME3 (también en la línea para Steam).")
+        for key, title, sub in (("skip_logos", "Saltar los logos de inicio", ""),
+                                ("no_boot_boost", "Sin caché de arranque",
+                                 "ME3 guarda descifrados los archivos del juego para arrancar más rápido; desactívalo "
+                                 "si da problemas")):
+            row = Adw.SwitchRow(title=title, subtitle=sub, active=bool(st.me3_opts.get(key)))
+            row.connect("notify::active", self._me3_opt, key)
+            g.add(row)
+        for m in st.ordered():
+            if len(m.me3_variants) > 1:
+                row = Adw.ComboRow(title=f"Perfil de «{m.name}»", model=Gtk.StringList.new(m.me3_variants),
+                                   selected=m.me3_variants.index(m.me3_variant) if m.me3_variant in m.me3_variants else 0)
+                row.connect("notify::selected", self._me3_variant, m.uid)
+                g.add(row)
+        return g
+
+    def _me3_opt(self, row, _p, key):
+        st = self.page.ctx.state
+        st.me3_opts[key] = row.get_active()
+        st.save()
+        self.page.settings_changed()
+
+    def _me3_variant(self, row, _p, uid):
+        st = self.page.ctx.state
+        m = st.mods[uid]
+        m.me3_variant = m.me3_variants[row.get_selected()]
+        manager.remap(self.page.ctx)
+        self.page.settings_changed()
 
     def _apply_domain(self, row):
         dom = row.get_text().strip().lower().strip("/").split("/")[-1]

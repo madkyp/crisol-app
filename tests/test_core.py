@@ -168,6 +168,22 @@ class ME3Test(Base):
         manager.restore(self.ctx)
         self.assertFalse(self.ctx.me3_profile.exists())
 
+    def test_variants_and_options(self):
+        base = b'profileVersion = "v1"\n[[supports]]\ngame = "eldenring"\n[[package]]\nid = "c"\npath = "./../mod"\n'
+        seam = base + b'[[natives]]\npath = "./../SeamlessCoop/ersc.dll"\n'
+        files = {"C/me3/convergence.me3": base, "C/me3/convergence - seamless.me3": seam,
+                 "C/me3/Linux/me3": b"#!/bin/sh\n", "C/me3/Linux/win64/me3.exe": b"x", "C/mod/regulation.bin": b"c"}
+        rec = self.add("Conv", files)
+        self.assertEqual(rec.me3_variants, ["convergence"])  # seamless no: falta SeamlessCoop/ersc.dll
+        files["C/SeamlessCoop/ersc.dll"] = b"dll"
+        rec = self.add("Conv2", files)
+        self.assertEqual(rec.me3_variants, ["convergence", "convergence - seamless"])
+        rec.me3_variant = "convergence - seamless"
+        manager.remap(self.ctx)
+        self.assertEqual(rec.natives, ["C/SeamlessCoop/ersc.dll"])
+        self.ctx.state.me3_opts = {"skip_logos": True}
+        self.assertEqual(manager.me3_command(self.ctx)[-2:], ["--show-logos", "false"])
+
 
 class FomodInstallTest(Base):
     game_files = {"Game.exe": b"exe", "Game_Data/x": b"x"}
