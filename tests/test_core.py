@@ -169,6 +169,39 @@ class ME3Test(Base):
         self.assertFalse(self.ctx.me3_profile.exists())
 
 
+class FomodInstallTest(Base):
+    game_files = {"Game.exe": b"exe", "Game_Data/x": b"x"}
+
+    def test_install_with_fomod(self):
+        from tests.test_fomod import XML
+        files = {"Mod/fomod/ModuleConfig.xml": XML.replace('encoding="UTF-16"', 'encoding="UTF-8"').encode(),
+                 "Mod/Core/base.txt": b"base", "Mod/Tex/2k/armor.dds": b"2k", "Mod/Tex/4k/armor.dds": b"4k",
+                 "Mod/Tex/4k/parallax.dds": b"px", "Mod/Extras/Cape/cape.dds": b"c", "Mod/Patch/4k.ini": b"i"}
+        seen = {}
+
+        def chooser(module, root, previous):
+            seen["previous"] = previous
+            return {(0, 0): {0}, (0, 1): set()}  # 2K, sin extras
+
+        z = make_zip(self.tmp / "dl/fomod.zip", files)
+        rec = manager.install_archive(self.ctx, z, ModRecord(uid=self.ctx.state.new_uid(), name="Armor"),
+                                      chooser=chooser)
+        self.assertEqual(rec.fomod_name, "Better Armor")
+        self.assertIsNone(seen["previous"])
+        self.assertEqual(sorted(d for _, d in rec.files), ["base.txt", "textures/armor.dds"])
+        # Reinstalar sin selector reutiliza la elección guardada (2K).
+        rec = manager.install_archive(self.ctx, z, rec)
+        self.assertEqual(sorted(d for _, d in rec.files), ["base.txt", "textures/armor.dds"])
+        manager.apply(self.ctx)
+        self.assertEqual((self.game_dir / "textures/armor.dds").read_bytes(), b"2k")
+        self.assert_restored()
+        # Cancelar el asistente no deja nada a medias.
+        with self.assertRaises(manager.InstallCancelled):
+            manager.install_archive(self.ctx, z, ModRecord(uid=self.ctx.state.new_uid(), name="B"),
+                                    chooser=lambda *a: None)
+        self.assertEqual(len(self.ctx.state.mods), 1)
+
+
 class RunningTest(Base):
     game_files = {"Game.exe": b"exe"}
 

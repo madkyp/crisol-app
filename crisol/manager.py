@@ -15,7 +15,7 @@ from pathlib import Path
 
 import requests
 
-from . import archive, paths, running, secrets
+from . import archive, fomod, paths, running, secrets
 from .deploy import Deployer, Plan, Report, make_plan
 from .games import Game
 from .layouts import LAYOUTS, Layout, LayoutError, detect
@@ -185,17 +185,58 @@ def download_nexus(nexus: Nexus, link: NxmLink, progress: Progress | None = None
 
 # ---------------------------------------------------------------- instalación
 
+class InstallCancelled(Exception):
+    pass
+
+
+# Elige las opciones de un FOMOD: (módulo, raíz del mod, elección previa o None) → elección, o None = cancelar.
+# Se llama desde el hilo de instalación; la interfaz muestra el asistente y espera la respuesta.
+FomodChooser = Callable[[fomod.Module, Path, "fomod.Choice | None"], "fomod.Choice | None"]
+
+
+def _apply_fomod(ctx: GameContext, tmp: Path, rec: ModRecord, chooser: FomodChooser | None,
+                 progress: Progress | None) -> None:
+    """Si el mod trae instalador FOMOD, deja en tmp solo lo que se elige instalar."""
+    cfg = fomod.find_config(tmp)
+    if cfg is None:
+        rec.fomod_name, rec.fomod_choice = "", []
+        return
+    module = fomod.parse(cfg)
+    mod_root = cfg.parent.parent
+    previous = fomod.choice_from_json(rec.fomod_choice) if rec.fomod_choice else None
+    choice = chooser(module, mod_root, previous) if chooser else (previous or fomod.default_choice(
+        module, ctx.game.install_dir))
+    if choice is None:
+        raise InstallCancelled("Instalación cancelada")
+    if progress:
+        progress(0.5, "Instalando las opciones elegidas…")
+    out = tmp.with_name(tmp.name + ".fomod")
+    shutil.rmtree(out, ignore_errors=True)
+    fomod.build(module, choice, mod_root, out, ctx.game.install_dir)
+    shutil.rmtree(tmp)
+    out.rename(tmp)
+    rec.fomod_name = module.name or rec.name
+    rec.fomod_choice = fomod.choice_to_json(choice)
+
+
 def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout_id: str | None = None,
-                    progress: Progress | None = None) -> ModRecord:
+                    progress: Progress | None = None, chooser: FomodChooser | None = None) -> ModRecord:
     """Extrae el archivo a staging y calcula dónde va cada archivo. Si rec ya existe, lo actualiza
-    conservando su posición y estado en todos los perfiles."""
+    conservando su posición y estado en todos los perfiles. Si trae instalador FOMOD, chooser
+    decide las opciones (sin chooser: las de la vez anterior o las recomendadas)."""
     st = ctx.state
     final = st.staging(rec.uid)
     tmp = final.with_name(final.name + ".new")
     if progress:
         progress(0.0, "Extrayendo…")
     archive.extract(archive_path, tmp)
+    try:
+        _apply_fomod(ctx, tmp, rec, chooser, progress)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     layout = LAYOUTS[layout_id](ctx.game.install_dir) if layout_id else ctx.layout
+    layout.keep_docs = bool(rec.fomod_name)
     try:
         mapping = layout.map_files(tmp, rec.name)
     except LayoutError:
@@ -262,7 +303,8 @@ def delete_archives(ctx: GameContext) -> int:
     return sum(delete_archive(ctx, uid) for uid in list(ctx.state.mods))
 
 
-def install_manual(ctx: GameContext, archive_path: Path, layout_id: str | None = None) -> ModRecord:
+def install_manual(ctx: GameContext, archive_path: Path, layout_id: str | None = None,
+                   chooser: FomodChooser | None = None) -> ModRecord:
     """Importa un archivo descargado a mano (p. ej. desde el navegador)."""
     name = re.sub(r"[-_ ]?\d+(-\d+)*\.(zip|7z|rar|pak)$", "", archive_path.name, flags=re.I) or archive_path.stem
     dest = paths.DOWNLOADS_DIR / "manual" / archive_path.name
@@ -287,11 +329,11 @@ def install_manual(ctx: GameContext, archive_path: Path, layout_id: str | None =
                 rec.verified = "md5"
         except ProviderError as e:
             log.info("md5 no encontrado en Nexus: %s", e)
-    return install_archive(ctx, dest, rec, layout_id)
+    return install_archive(ctx, dest, rec, layout_id, chooser=chooser)
 
 
 def install_from_nxm(ctx: GameContext, nexus: Nexus, link: NxmLink, progress: Progress | None = None,
-                     cancel: threading.Event | None = None) -> ModRecord:
+                     cancel: threading.Event | None = None, chooser: FomodChooser | None = None) -> ModRecord:
     if ctx.state.nexus_domain and link.domain != ctx.state.nexus_domain:
         raise DownloadError(f"El enlace es de otro juego ({link.domain})")
     info = nexus.mod(link.domain, link.mod_id)
@@ -317,7 +359,8 @@ def install_from_nxm(ctx: GameContext, nexus: Nexus, link: NxmLink, progress: Pr
     rec.md5, rec.size, rec.file_name = meta["md5"], meta["size"], meta["file_name"]
     rec.requirements = info.requirements
     rec.verified = verified
-    rec = install_archive(ctx, path, rec, progress=lambda f, m: progress and progress(0.9 + f * 0.1, m))
+    rec = install_archive(ctx, path, rec, progress=lambda f, m: progress and progress(0.9 + f * 0.1, m),
+                          chooser=chooser)
     if old_archive and old_archive != path:
         old_archive.unlink(missing_ok=True)
     return rec
@@ -397,7 +440,8 @@ def restore(ctx: GameContext, progress: Progress | None = None) -> Report:
         return r
 
 
-def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None) -> ModRecord:
+def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None,
+              chooser: FomodChooser | None = None) -> ModRecord:
     """Vuelve a extraer un mod desde su descarga (sin bajarlo otra vez), conservando su posición."""
     rec = ctx.state.mods[uid]
     if ctx.layout.external:
@@ -408,7 +452,7 @@ def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None) -> M
     if not path.name.lower().endswith(archive.ARCHIVE_EXTS) and archive.sniff(path):
         path = path.rename(path.with_name(path.name + archive.sniff(path)))
         rec.file_name = path.name
-    return install_archive(ctx, path, rec, progress=progress)
+    return install_archive(ctx, path, rec, progress=progress, chooser=chooser)
 
 
 def remap(ctx: GameContext) -> list[str]:
@@ -420,6 +464,7 @@ def remap(ctx: GameContext) -> list[str]:
     layout = ctx.layout
     failed = []
     for m in ctx.state.mods.values():
+        layout.keep_docs = bool(m.fomod_name)
         try:
             mp = layout.map_files(ctx.state.staging(m.uid), m.name)
         except LayoutError:

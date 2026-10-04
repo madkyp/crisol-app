@@ -343,7 +343,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         def work():
             with manager.game_lock(game):
-                return manager.install_from_nxm(ctx, self.ctl.nexus, link, task.update, task.cancel)
+                from .fomod_dialog import make_chooser
+                return manager.install_from_nxm(ctx, self.ctl.nexus, link, task.update, task.cancel,
+                                                chooser=make_chooser(self, game.install_dir))
 
         def done(rec):
             task.done()
@@ -357,7 +359,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         def fail(e):
             task.done()
-            if task.cancel.is_set():
+            if isinstance(e, manager.InstallCancelled):
+                self.toast("Instalación cancelada")
+            elif task.cancel.is_set():
                 self.toast("Descarga cancelada. Vuelve a pulsar «Slow download» y continuará donde se quedó.", 6)
             else:
                 self.error("No se pudo instalar el mod", e)

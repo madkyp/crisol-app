@@ -16,6 +16,7 @@ from ..games import Game
 from ..layouts import LAYOUTS
 from ..providers.base import SORTS, ModInfo, SearchPage
 from ..store import ModRecord
+from .fomod_dialog import make_chooser
 from .util import human_count, human_size, load_remote, local_texture, placeholder, run_async
 
 log = logging.getLogger(__name__)
@@ -591,12 +592,13 @@ class GamePage(Adw.NavigationPage):
         d.connect("response", resp)
         d.present(self.win)
 
-    def reinstall_mod(self, m: ModRecord) -> None:
+    def reinstall_mod(self, m: ModRecord, reconfigure: bool = False) -> None:
         task = self.win.taskbar.add(f"Reinstalando «{m.name}» desde la descarga")
+        chooser = make_chooser(self.win, self.game.install_dir) if reconfigure else None
 
         def work():
             with manager.game_lock(self.game):
-                return manager.reinstall(self.ctx, m.uid, task.update)
+                return manager.reinstall(self.ctx, m.uid, task.update, chooser=chooser)
 
         def done(rec):
             task.done()
@@ -605,7 +607,10 @@ class GamePage(Adw.NavigationPage):
 
         def fail(e):
             task.done()
-            self.win.error("No se pudo reinstalar", e)
+            if isinstance(e, manager.InstallCancelled):
+                self.win.toast("Sin cambios")
+            else:
+                self.win.error("No se pudo reinstalar", e)
         run_async(work, done, fail)
 
     def update_mod(self, m: ModRecord) -> None:
@@ -634,7 +639,8 @@ class GamePage(Adw.NavigationPage):
 
             def work():
                 with manager.game_lock(self.game):
-                    return manager.install_manual(self.ctx, path)
+                    return manager.install_manual(self.ctx, path,
+                                                  chooser=make_chooser(self.win, self.game.install_dir))
 
             def done(rec):
                 task.done()
@@ -645,7 +651,10 @@ class GamePage(Adw.NavigationPage):
 
             def fail(e):
                 task.done()
-                self.win.error("No se pudo importar", e)
+                if isinstance(e, manager.InstallCancelled):
+                    self.win.toast("Instalación cancelada")
+                else:
+                    self.win.error("No se pudo importar", e)
             run_async(work, done, fail)
         dlg.open(self.win, None, picked)
 
@@ -897,6 +906,8 @@ class ModRow(Gtk.ListBoxRow):
         menu.append("Al principio", "row.top")
         menu.append("Al final", "row.bottom")
         if manager.archive_size(m):
+            if m.fomod_name:
+                menu.append("Cambiar opciones del instalador…", "row.reconfigure")
             menu.append("Reinstalar desde la descarga", "row.reinstall")
             menu.append(f"Borrar archivo descargado ({human_size(manager.archive_size(m))})", "row.delete-archive")
         if m.mod_id:
@@ -916,6 +927,7 @@ class ModRow(Gtk.ListBoxRow):
             .launch(page.win, None, None),
             "remove": lambda: page.remove_mod(m),
             "reinstall": lambda: page.reinstall_mod(m),
+            "reconfigure": lambda: page.reinstall_mod(m, reconfigure=True),
             "delete-archive": lambda: page.delete_archive(m),
         }
         for name, cb in acts.items():

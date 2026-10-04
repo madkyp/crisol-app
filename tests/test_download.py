@@ -38,6 +38,7 @@ class DownloadTest(unittest.TestCase):
     def serve(self, ranges: bool) -> str:
         srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(ranges))
         threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
         self.addCleanup(srv.shutdown)
         return f"http://127.0.0.1:{srv.server_address[1]}/mod.zip"
 

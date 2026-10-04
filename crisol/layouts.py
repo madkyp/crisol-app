@@ -147,6 +147,7 @@ class Layout:
     description = ""
     anchors: list[str] = [""]
     supports_internal_conflicts = False
+    keep_docs = False  # True tras un FOMOD: lo que instala es intencionado, no se descartan «léemes»
     external = False   # True: los mods no se copian al juego (los carga un lanzador, p. ej. ME3)
 
     def __init__(self, game_dir: Path):
@@ -168,7 +169,7 @@ class Layout:
         mapped, skipped = [], []
         for f in files:
             rel = _under(f, src_dir)
-            if rel is None or (_is_doc(f) and "/" not in rel):
+            if rel is None or (_is_doc(f) and "/" not in rel and not self.keep_docs):
                 skipped.append(f)  # fuera de la carpeta elegida, o un léeme suelto
                 continue
             mapped.append((f, _join(game_rel, rel)))

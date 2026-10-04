@@ -39,6 +39,8 @@ class ModRecord:
     latest_version: str = ""
     verified: str = ""           # "md5" | "size" | "" (cómo se comprobó la descarga)
     staged_size: int = 0         # bytes que ocupa el mod extraído
+    fomod_name: str = ""         # el mod tiene instalador FOMOD
+    fomod_choice: list = field(default_factory=list)  # opciones elegidas (para reinstalar/actualizar)
 
     @property
     def update_available(self) -> bool:
