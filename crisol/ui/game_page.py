@@ -16,7 +16,7 @@ from ..games import Game
 from ..layouts import LAYOUTS
 from ..providers.base import SORTS, ModInfo, SearchPage
 from ..store import ModRecord
-from .util import human_count, load_remote, local_texture, placeholder, run_async
+from .util import human_count, human_size, load_remote, local_texture, placeholder, run_async
 
 log = logging.getLogger(__name__)
 PAGE_SIZE = 24
@@ -307,6 +307,14 @@ class GamePage(Adw.NavigationPage):
             group.add_action(a)
         self.insert_action_group("inst", group)
 
+        space = Gtk.Box(spacing=8)
+        self.space_label = Gtk.Label(xalign=0, hexpand=True, css_classes=["dim-label", "caption"])
+        space.append(self.space_label)
+        self.space_btn = Gtk.Button(label="Borrar descargas", css_classes=["flat", "caption"],
+                                    tooltip_text="Borra los archivos descargados de este juego; los mods siguen instalados")
+        self.space_btn.connect("clicked", lambda *_: self.delete_archives())
+        space.append(self.space_btn)
+        box.append(space)
         self.order_hint = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label", "caption"])
         box.append(self.order_hint)
         self.launch_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -340,6 +348,7 @@ class GamePage(Adw.NavigationPage):
         self.installed_page.set_title(f"Instalados ({len(st.mods)})" if st.mods else "Instalados")
         self.installed_page.set_needs_attention(st.dirty_deploy and bool(st.mods))
         self._missing = manager.missing_requirements(self.ctx)
+        self._show_space()
         self._show_loader()
         self._fill_list()
         self._update_hero()
@@ -412,6 +421,40 @@ class GamePage(Adw.NavigationPage):
             b.append(Gtk.Image.new_from_icon_name("dialog-information-symbolic"))
             b.append(Gtk.Label(label=n, xalign=0, wrap=True, selectable=True, hexpand=True))
             self.notes.append(b)
+
+    def _show_space(self) -> None:
+        if not self.ctx.state.mods:
+            self.space_label.set_label("")
+            self.space_btn.set_visible(False)
+            return
+
+        def done(sizes):
+            staged, downloads = sizes
+            self.space_label.set_label(f"Espacio: mods extraídos {human_size(staged)} · descargas {human_size(downloads)}"
+)
+            self.space_btn.set_visible(downloads > 0)
+        run_async(manager.disk_usage, done, None, self.ctx)
+
+    def delete_archive(self, m: ModRecord) -> None:
+        freed = manager.delete_archive(self.ctx, m.uid)
+        self.win.toast(f"Liberados {human_size(freed)}. Para reinstalar «{m.name}» habrá que descargarlo de nuevo.")
+        self.refresh_installed()
+
+    def delete_archives(self) -> None:
+        d = Adw.AlertDialog(heading="¿Borrar las descargas de este juego?",
+                            body="Los mods siguen instalados y funcionando. Solo se borran los archivos .zip/.7z/.rar "
+                                 "descargados: para reinstalar un mod habrá que descargarlo otra vez.")
+        d.add_response("cancel", "Cancelar")
+        d.add_response("delete", "Borrar descargas")
+        d.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def resp(_d, r):
+            if r == "delete":
+                freed = manager.delete_archives(self.ctx)
+                self.win.toast(f"Liberados {human_size(freed)}")
+                self.refresh_installed()
+        d.connect("response", resp)
+        d.present(self.win)
 
     def _show_loader(self) -> None:
         _clear(self.loader_box)
@@ -533,6 +576,12 @@ class GamePage(Adw.NavigationPage):
 
         def resp(_d, r):
             if r == "remove":
+                if self.ctx.layout.external:
+                    try:
+                        manager.ensure_closed(self.ctx)  # con ME3 el juego lee el staging
+                    except Exception as e:  # noqa: BLE001
+                        self.win.error("Juego abierto", e)
+                        return
                 self.ctx.state.remove(m.uid)
                 if m.archive and Path(m.archive).is_file():
                     Path(m.archive).unlink(missing_ok=True)
@@ -589,6 +638,8 @@ class GamePage(Adw.NavigationPage):
 
             def done(rec):
                 task.done()
+                if not self.ctl.cfg.keep_archives:
+                    manager.delete_archive(self.ctx, rec.uid)  # la copia; el original sigue donde estaba
                 self.win.toast(f"«{rec.name}» importado" + (" y reconocido en Nexus Mods" if rec.mod_id else ""))
                 self.changed()
 
@@ -812,7 +863,8 @@ class ModRow(Gtk.ListBoxRow):
         meta = Gtk.Box(spacing=6)
         sub = " · ".join(x for x in (f"v{m.version}" if m.version else "", m.author,
                                      "Nexus" if m.provider == "nexus" else "Importado a mano",
-                                     f"{len(m.files)} archivos") if x)
+                                     f"{len(m.files)} archivos",
+                                     human_size(m.staged_size) if m.staged_size else "") if x)
         meta.append(Gtk.Label(label=sub, xalign=0, css_classes=["dim-label", "caption"],
                               ellipsize=Pango.EllipsizeMode.END))
         if m.update_available:
@@ -844,8 +896,9 @@ class ModRow(Gtk.ListBoxRow):
         menu.append("Bajar", "row.down")
         menu.append("Al principio", "row.top")
         menu.append("Al final", "row.bottom")
-        if m.archive:
+        if manager.archive_size(m):
             menu.append("Reinstalar desde la descarga", "row.reinstall")
+            menu.append(f"Borrar archivo descargado ({human_size(manager.archive_size(m))})", "row.delete-archive")
         if m.mod_id:
             menu.append("Ver en Nexus Mods", "row.page")
         menu.append("Desinstalar", "row.remove")
@@ -863,6 +916,7 @@ class ModRow(Gtk.ListBoxRow):
             .launch(page.win, None, None),
             "remove": lambda: page.remove_mod(m),
             "reinstall": lambda: page.reinstall_mod(m),
+            "delete-archive": lambda: page.delete_archive(m),
         }
         for name, cb in acts.items():
             a = Gio.SimpleAction.new(name, None)

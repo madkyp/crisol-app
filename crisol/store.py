@@ -38,6 +38,7 @@ class ModRecord:
     requirements: list[dict] = field(default_factory=list)
     latest_version: str = ""
     verified: str = ""           # "md5" | "size" | "" (cómo se comprobó la descarga)
+    staged_size: int = 0         # bytes que ocupa el mod extraído
 
     @property
     def update_available(self) -> bool:

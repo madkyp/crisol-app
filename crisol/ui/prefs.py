@@ -56,6 +56,15 @@ class PrefsDialog(Adw.PreferencesDialog):
         links.add(self.nxm)
         page.add(links)
 
+        disk = Adw.PreferencesGroup(title="Espacio en disco")
+        keep = Adw.SwitchRow(title="Guardar los archivos descargados",
+                             subtitle="Permiten reinstalar un mod sin volver a descargarlo, pero ocupan tanto como "
+                                      "el mod extraído (p. ej. The Convergence: ~10 GB más)",
+                             active=self.ctl.cfg.keep_archives)
+        keep.connect("notify::active", self._keep)
+        disk.add(keep)
+        page.add(disk)
+
         look = Adw.PreferencesGroup(title="Apariencia")
         colors = [c for _, c in ACCENTS]
         sel = colors.index(self.ctl.cfg.accent) if self.ctl.cfg.accent in colors else 0
@@ -142,6 +151,10 @@ class PrefsDialog(Adw.PreferencesDialog):
         self.ctl.cfg.accent = color
         self.ctl.cfg.save()
         self.win.get_application().set_accent(color)
+
+    def _keep(self, row, _p):
+        self.ctl.cfg.keep_archives = row.get_active()
+        self.ctl.cfg.save()
 
     def _adult(self, row, _p):
         self.ctl.cfg.show_adult = self.ctl.nexus.show_adult = row.get_active()

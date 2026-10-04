@@ -169,6 +169,39 @@ class ME3Test(Base):
         self.assertFalse(self.ctx.me3_profile.exists())
 
 
+class RunningTest(Base):
+    game_files = {"Game.exe": b"exe"}
+
+    def _spawn(self, *args, cwd=None):
+        import subprocess
+        import sys
+        import time
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", *args], cwd=cwd)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        time.sleep(0.2)
+        return p
+
+    def test_detects_steam_and_proton_processes(self):
+        from crisol import running
+        self.assertEqual(running.running(self.game), [])
+        # Steam: «reaper SteamLaunch AppId=<id>» mientras el juego está abierto (el juego falso es AppId 1).
+        steam = self._spawn("SteamLaunch", "AppId=1")
+        self.assertTrue(running.running(self.game))
+        with self.assertRaises(running.GameRunning):
+            manager.apply(self.ctx)
+        steam.kill()
+        steam.wait()
+        self.assertEqual(running.running(self.game), [])
+        # Proton: un .exe con la carpeta del juego como directorio de trabajo.
+        self._spawn("Z:" + str(self.game_dir).replace("/", "\\") + "\\Game.exe", cwd=self.game_dir)
+        self.assertEqual(running.running(self.game), ["Game.exe"])
+        # Un proceso cualquiera (p. ej. un terminal) en la carpeta del juego no cuenta.
+        other = self._spawn("nada", cwd=self.game_dir)
+        self.assertEqual(running.running(self.game), ["Game.exe"])
+        other.kill()
+
+
 class KCD2Test(Base):
     game_files = {"Bin/Win64MasterMasterSteamPGO/KingdomCome.exe": b"exe", "Data/IPL_GameData.pak": b"x"}
 

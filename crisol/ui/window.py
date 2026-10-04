@@ -347,6 +347,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         def done(rec):
             task.done()
+            if not self.ctl.cfg.keep_archives:
+                manager.delete_archive(ctx, rec.uid)
             self.toast(f"«{rec.name}» instalado. Pulsa «Aplicar» para llevarlo al juego.", 6)
             page = self.current_game_page(game)
             if page:
@@ -355,7 +357,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         def fail(e):
             task.done()
-            self.error("No se pudo instalar el mod", e)
+            if task.cancel.is_set():
+                self.toast("Descarga cancelada. Vuelve a pulsar «Slow download» y continuará donde se quedó.", 6)
+            else:
+                self.error("No se pudo instalar el mod", e)
         run_async(work, done, fail)
 
     # ---------- diálogos ----------

@@ -11,6 +11,7 @@ class Config:
     accent: str = "#e0703a"
     show_all_games: bool = False
     show_adult: bool = False
+    keep_archives: bool = True   # guardar el archivo descargado (permite reinstalar sin volver a bajarlo)
     # Enlace juego → dominio de Nexus elegido o corregido a mano: {"steam:1771300": "kingdomcomedeliverance2"}
     nexus_domains: dict[str, str] = field(default_factory=dict)
     window_width: int = 1280

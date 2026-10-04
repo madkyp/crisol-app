@@ -5,6 +5,7 @@ Todo lo de aquí es bloqueante (red, disco): la interfaz lo llama desde hilos.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import threading
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import requests
 
-from . import archive, paths, secrets
+from . import archive, paths, running, secrets
 from .deploy import Deployer, Plan, Report, make_plan
 from .games import Game
 from .layouts import LAYOUTS, Layout, LayoutError, detect
@@ -81,31 +82,51 @@ def game_lock(game: Game) -> threading.Lock:
 
 def download(url: str, dest: Path, expected_size: int = 0, progress: Progress | None = None,
              cancel: threading.Event | None = None) -> Path:
+    """Descarga a dest.part y la renombra al terminar. Si ya hay un .part (descarga cortada o
+    cancelada), se continúa desde donde se quedó (petición Range); si el servidor no lo admite,
+    se empieza de nuevo."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    have = tmp.stat().st_size if tmp.exists() else 0
+    if expected_size and have > expected_size:
+        tmp.unlink()
+        have = 0
+    headers = {"User-Agent": "Crisol"}
+    if have:
+        headers["Range"] = f"bytes={have}-"
     try:
-        with requests.get(url, stream=True, timeout=30, headers={"User-Agent": "Crisol"}) as r:
-            r.raise_for_status()
-            total = int(r.headers.get("Content-Length") or expected_size or 0)
-            done = 0
-            with tmp.open("wb") as f:
-                for chunk in r.iter_content(1 << 20):
-                    if cancel and cancel.is_set():
-                        raise DownloadError("Descarga cancelada")
-                    f.write(chunk)
-                    done += len(chunk)
-                    if progress and total:
-                        progress(done / total, f"{done / 1e6:.1f} / {total / 1e6:.1f} MB")
+        with requests.get(url, stream=True, timeout=30, headers=headers) as r:
+            if r.status_code == 416 and expected_size and have == expected_size:
+                pass  # ya estaba completo
+            else:
+                r.raise_for_status()
+                resumed = have and r.status_code == 206
+                if not resumed:
+                    have = 0
+                total = have + int(r.headers.get("Content-Length") or 0) or expected_size
+                done = have
+                if resumed:
+                    log.info("reanudando %s desde %.1f MB", dest.name, have / 1e6)
+                with tmp.open("ab" if resumed else "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        if cancel and cancel.is_set():
+                            # El .part se conserva para poder reanudar más tarde.
+                            raise DownloadError("Descarga cancelada (se podrá reanudar)")
+                        f.write(chunk)
+                        done += len(chunk)
+                        if progress and total:
+                            extra = " (reanudada)" if resumed else ""
+                            progress(done / total, f"{done / 1e6:.1f} / {total / 1e6:.1f} MB{extra}")
     except requests.RequestException as e:
-        tmp.unlink(missing_ok=True)
-        raise DownloadError(f"La descarga ha fallado: {e}") from e
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+        raise DownloadError(f"La descarga se ha cortado: {e}. Vuelve a pulsar «Slow download» y "
+                            "continuará donde se quedó.") from e
     if expected_size and tmp.stat().st_size != expected_size:
         got = tmp.stat().st_size
-        tmp.unlink(missing_ok=True)
-        raise DownloadError(f"Descarga incompleta o dañada: {got} bytes, se esperaban {expected_size}")
+        if got > expected_size:
+            tmp.unlink(missing_ok=True)
+            raise DownloadError(f"Descarga dañada: {got} bytes, se esperaban {expected_size}. Se ha borrado.")
+        raise DownloadError(f"Descarga incompleta ({got / 1e6:.1f} de {expected_size / 1e6:.1f} MB). "
+                            "Vuelve a pulsar «Slow download» y continuará donde se quedó.")
     tmp.replace(dest)
     return dest
 
@@ -189,11 +210,56 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     rec.packages, rec.natives, rec.savefile = mapping.packages, mapping.natives, mapping.savefile
     rec.layout = layout.id
     rec.archive = str(archive_path)
+    rec.staged_size = dir_size(final)
     st.add(rec)
     st.save()
     if progress:
         progress(1.0, "Instalado")
     return rec
+
+
+def dir_size(path: Path) -> int:
+    total = 0
+    for dirpath, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(dirpath, f)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def archive_size(rec: ModRecord) -> int:
+    try:
+        return Path(rec.archive).stat().st_size if rec.archive else 0
+    except OSError:
+        return 0
+
+
+def disk_usage(ctx: GameContext) -> tuple[int, int]:
+    """(bytes de mods extraídos, bytes de archivos descargados) de un juego."""
+    staged = 0
+    for m in ctx.state.mods.values():
+        if not m.staged_size and ctx.state.staging(m.uid).exists():
+            m.staged_size = dir_size(ctx.state.staging(m.uid))
+        staged += m.staged_size
+    return staged, sum(archive_size(m) for m in ctx.state.mods.values())
+
+
+def delete_archive(ctx: GameContext, uid: str) -> int:
+    """Borra el archivo descargado de un mod (ya extraído). Devuelve los bytes liberados."""
+    rec = ctx.state.mods[uid]
+    size = archive_size(rec)
+    if rec.archive:
+        Path(rec.archive).unlink(missing_ok=True)
+        Path(rec.archive + ".part").unlink(missing_ok=True)
+    rec.archive = ""
+    ctx.state.save()
+    return size
+
+
+def delete_archives(ctx: GameContext) -> int:
+    return sum(delete_archive(ctx, uid) for uid in list(ctx.state.mods))
 
 
 def install_manual(ctx: GameContext, archive_path: Path, layout_id: str | None = None) -> ModRecord:
@@ -284,9 +350,18 @@ def check_updates(ctx: GameContext, nexus: Nexus) -> int:
     return sum(1 for m in ctx.state.mods.values() if m.update_available)
 
 
+def ensure_closed(ctx: GameContext) -> None:
+    """Error si el juego está abierto: cambiar sus archivos ahora podría dejarlo a medias."""
+    procs = running.running(ctx.game)
+    if procs:
+        raise running.GameRunning(ctx.game, procs)
+
+
 def apply(ctx: GameContext, progress: Progress | None = None) -> Report:
     with game_lock(ctx.game):
         layout = ctx.layout
+        if not layout.external:
+            ensure_closed(ctx)
         if layout.external:
             # ME3: el juego no se toca; solo se escribe el perfil con los mods activos en orden.
             if ctx.deployer.is_deployed():
@@ -313,6 +388,8 @@ def me3_command(ctx: GameContext) -> list[str] | None:
 
 def restore(ctx: GameContext, progress: Progress | None = None) -> Report:
     with game_lock(ctx.game):
+        if ctx.deployer.is_deployed():
+            ensure_closed(ctx)
         ctx.me3_profile.unlink(missing_ok=True)
         r = ctx.deployer.purge(progress)
         ctx.state.dirty_deploy = bool(ctx.state.enabled_ordered())
@@ -323,6 +400,8 @@ def restore(ctx: GameContext, progress: Progress | None = None) -> Report:
 def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None) -> ModRecord:
     """Vuelve a extraer un mod desde su descarga (sin bajarlo otra vez), conservando su posición."""
     rec = ctx.state.mods[uid]
+    if ctx.layout.external:
+        ensure_closed(ctx)  # con ME3 el juego lee los archivos del staging mientras está abierto
     path = Path(rec.archive)
     if not path.is_file():
         raise DownloadError("Ya no está el archivo descargado de este mod; vuelve a descargarlo.")
