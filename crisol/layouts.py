@@ -109,12 +109,36 @@ def _join(*parts: str) -> str:
 
 @dataclass
 class Loader:
-    """Cargador de mods que necesita el juego (o algún mod instalado)."""
+    """Cargador de mods del juego: si hace falta, si está instalado y dónde conseguirlo."""
     name: str
-    needed: bool            # hace falta con los mods activos
+    level: str              # "required" (obligatorio) | "optional" (depende del mod) | "none" (no usa)
     installed: bool
     detail: str = ""
     url: str = ""
+    engine: str = ""        # motor detectado, para mostrarlo
+    search: tuple = ()      # nombres con los que buscarlo en Nexus
+
+    @property
+    def needed(self) -> bool:
+        return self.level == "required"
+
+
+# Nombres de cargadores en los requisitos de un mod de Nexus → (nombre, términos).
+LOADER_NAMES = {"bepinex": "BepInEx", "melonloader": "MelonLoader", "ue4ss": "UE4SS", "mod engine": "Mod Engine",
+                "me3": "Mod Engine 3", "script extender": "Script Extender", "asi loader": "ASI Loader",
+                "modloader": "Mod Loader", "mod loader": "Mod Loader"}
+
+
+def loader_in_text(text: str) -> str | None:
+    t = text.lower()
+    return next((v for k, v in LOADER_NAMES.items() if k in t), None)
+
+
+def unity_engine(game_dir: Path) -> str | None:
+    names = _children(game_dir)
+    if "unityplayer.dll" not in names:
+        return None
+    return "Unity (IL2CPP)" if "gameassembly.dll" in names else "Unity (Mono)"
 
 
 class Layout:
@@ -178,7 +202,7 @@ class Layout:
         return []
 
     def loader(self, mods: list, staging) -> Loader | None:
-        """Cargador que necesitan los mods activos. None = este tipo de juego no usa ninguno."""
+        """Cargador que necesitan los mods activos o, si ninguno lo pide, lo que se sabe del juego."""
         return None
 
     # Orden: qué gana en un conflicto de archivos (texto para la interfaz).
@@ -199,20 +223,28 @@ class LooseLayout(Layout):
         # cargador puede venir del juego o de otro mod instalado.
         dsts = [d.lower() for m in mods for _, d in m.files]
         game = _children(self.game_dir)
-        il2cpp = (self.game_dir / "GameAssembly.dll").exists()
+        engine = unity_engine(self.game_dir) or ""
+        il2cpp = "IL2CPP" in engine
+        have_bep = ("bepinex" in game and (ci_dir(self.game_dir, "BepInEx/core") is not None)) or \
+            any(d.startswith("bepinex/core/") for d in dsts)
+        have_melon = "melonloader" in game or any(d.startswith("melonloader/") for d in dsts)
+        bep = ("BepInEx" + (" 6 (IL2CPP)" if il2cpp else ""), "https://github.com/BepInEx/BepInEx/releases")
         if any(d.startswith("bepinex/plugins/") for d in dsts):
-            ok = "bepinex" in game and (self.game_dir / "BepInEx" / "core").is_dir() or \
-                any(d.startswith("bepinex/core/") for d in dsts)
-            return Loader("BepInEx" + (" 6 (IL2CPP)" if il2cpp else ""), True, ok,
-                          "Algún mod activo es un plugin de BepInEx." + ("" if ok else
-                          " Instálalo como un mod más (búscalo en Nexus o en su GitHub) y ponlo el primero."),
-                          "https://github.com/BepInEx/BepInEx/releases")
+            return Loader(bep[0], "required", have_bep, "Algún mod activo es un plugin de BepInEx." + ("" if have_bep
+                          else " Instálalo como un mod más y ponlo el primero."), bep[1], engine, ("BepInEx",))
         if any(d.startswith("mods/") and d.endswith(".dll") for d in dsts):
-            ok = "melonloader" in game or any(d.startswith("melonloader/") for d in dsts)
-            return Loader("MelonLoader", True, ok, "Algún mod activo es de MelonLoader." + ("" if ok else
-                          " Instálalo como un mod más y ponlo el primero."),
-                          "https://github.com/LavaGang/MelonLoader/releases")
-        return None
+            return Loader("MelonLoader", "required", have_melon, "Algún mod activo es de MelonLoader." + (
+                          "" if have_melon else " Instálalo como un mod más y ponlo el primero."),
+                          "https://github.com/LavaGang/MelonLoader/releases", engine, ("MelonLoader",))
+        if engine:
+            name = "BepInEx" if have_bep else "MelonLoader" if have_melon else "BepInEx o MelonLoader"
+            return Loader(name, "optional", have_bep or have_melon,
+                          f"Juego {engine}. Los mods de archivos (texturas, ajustes) no necesitan cargador; los "
+                          "plugins (.dll) necesitan BepInEx o MelonLoader según el mod: míralo en sus requisitos.",
+                          bep[1], engine, ("BepInEx", "MelonLoader"))
+        return Loader("Ninguno conocido", "none", False,
+                      "No se ha detectado un motor con cargador habitual: los mods se copian tal cual. Si un mod "
+                      "pide un cargador, aparecerá en sus requisitos.", "", "", ("Mod Loader", "Script Extender"))
 
 
 class UnrealLayout(Layout):
@@ -272,14 +304,16 @@ class UnrealLayout(Layout):
         dsts = [d.lower() for m in mods for _, d in m.files]
         needs = any("/logicmods/" in f"/{d}" or "/ue4ss/mods/" in f"/{d}" or d.endswith("/scripts/main.lua")
                     for d in dsts)
-        if not needs:
-            return None
         win64 = self.game_dir / self.project / "Binaries" / "Win64"
-        have = {c for c in _children(win64)}
+        have = _children(win64)
         ok = bool({"ue4ss.dll", "ue4ss"} & have) or any(d.endswith(("/ue4ss.dll", "/dwmapi.dll")) for d in dsts)
-        return Loader("UE4SS", True, ok, "Algún mod activo usa scripts o LogicMods de UE4SS." + ("" if ok else
-                      " Instálalo como un mod más (suele llamarse «UE4SS» en la página del juego en Nexus)."),
-                      "https://github.com/UE4SS-RE/RE-UE4SS/releases")
+        url = "https://github.com/UE4SS-RE/RE-UE4SS/releases"
+        if needs:
+            return Loader("UE4SS", "required", ok, "Algún mod activo usa scripts o LogicMods de UE4SS." + ("" if ok
+                          else " Instálalo como un mod más (suele estar en la página del juego en Nexus)."),
+                          url, "Unreal Engine", ("UE4SS",))
+        return Loader("UE4SS", "optional", ok, "Unreal Engine: los mods .pak no necesitan cargador; los de scripts "
+                      "(Lua) o LogicMods necesitan UE4SS.", url, "Unreal Engine", ("UE4SS",))
 
     def target(self, dst, position):
         p = PurePosixPath(dst)
@@ -353,7 +387,8 @@ class KCD2Layout(Layout):
         return {_join(self.MODS, "mod_order.txt"): ("\n".join(lines + body) + "\n").encode()}
 
     def loader(self, mods, staging):
-        return Loader("Ninguno", False, True, "KCD2 carga los mods de la carpeta mods/ por sí mismo.")
+        return Loader("Ninguno", "none", True, "KCD2 carga los mods de la carpeta mods/ por sí mismo.",
+                      engine="CryEngine")
 
     def internal_entries(self, path):
         if path.suffix.lower() != ".pak":
@@ -484,10 +519,21 @@ class ME3Layout(Layout):
 
     def loader(self, mods, staging):
         me3 = self.find_me3([staging(m.uid) for m in mods])
-        return Loader("Mod Engine 3 (ME3)", True, me3 is not None,
+        return Loader("Mod Engine 3 (ME3)", "required", me3 is not None,
                       f"Se usa {me3}" if me3 else "Hace falta ME3 para cargar los mods. Algunos mods lo traen (The "
                       "Convergence); si no, descárgalo de su página de versiones en GitHub (incluye la de Linux).",
-                      "https://github.com/garyttierney/me3/releases")
+                      "https://github.com/garyttierney/me3/releases", "FromSoftware", ("Mod Engine 3", "ME3"))
+
+
+def ci_dir(root: Path, rel: str) -> Path | None:
+    """Carpeta rel dentro de root sin distinguir mayúsculas (como Wine), o None."""
+    cur = root
+    for part in rel.split("/"):
+        nxt = next((cur / n for n in (list(os.listdir(cur)) if cur.is_dir() else []) if n.lower() == part.lower()), None)
+        if nxt is None:
+            return None
+        cur = nxt
+    return cur if cur.is_dir() else None
 
 
 def _toml_str(s: str) -> str:

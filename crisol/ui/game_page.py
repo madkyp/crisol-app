@@ -52,6 +52,8 @@ class GamePage(Adw.NavigationPage):
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_start=28, margin_end=28,
                        margin_top=8, margin_bottom=24)
         body.append(self._build_hero())
+        self.loader_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        body.append(self.loader_box)
 
         self.stack = Adw.ViewStack(vexpand=True)
         self.stack.add_titled_with_icon(self._build_search(), "search", "Buscar mods", "system-search-symbolic")
@@ -173,15 +175,18 @@ class GamePage(Adw.NavigationPage):
             self.loader_chip.set_visible(False)
         else:
             self.loader_chip.set_visible(True)
-            if not ld.needed:
-                self.loader_chip.set_label("Sin cargador de mods")
+            if ld.level == "none":
+                self.loader_chip.set_label("No necesita cargador de mods")
                 self.loader_chip.set_css_classes(["chip"])
             elif ld.installed:
                 self.loader_chip.set_label(f"Cargador: {ld.name} ✓")
                 self.loader_chip.set_css_classes(["chip", "success"])
-            else:
-                self.loader_chip.set_label(f"Falta cargador: {ld.name}")
+            elif ld.level == "required":
+                self.loader_chip.set_label(f"Necesita cargador: {ld.name}")
                 self.loader_chip.set_css_classes(["chip", "error"])
+            else:
+                self.loader_chip.set_label(f"Cargador según el mod: {ld.name}")
+                self.loader_chip.set_css_classes(["chip", "warning"])
 
     # ================================================================ buscador
     def _build_search(self) -> Gtk.Widget:
@@ -303,8 +308,8 @@ class GamePage(Adw.NavigationPage):
 
         self.order_hint = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label", "caption"])
         box.append(self.order_hint)
-        self.loader_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.append(self.loader_box)
+        self.launch_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self.launch_box)
         self.notes = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(self.notes)
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["load-order"])
@@ -409,21 +414,41 @@ class GamePage(Adw.NavigationPage):
 
     def _show_loader(self) -> None:
         _clear(self.loader_box)
-        ld = self.ctx.loader() if self.ctx.state.mods else None
-        if ld is None or not ld.needed:
+        _clear(self.launch_box)
+        ld = self.ctx.loader()
+        if ld is None:
             return
+        level = {"required": "obligatorio", "optional": "depende del mod", "none": "no hace falta"}[ld.level]
+        state = "" if ld.level == "none" else (" · instalado" if ld.installed else " · no instalado")
         b = Gtk.Box(spacing=12, css_classes=["note-box"])
-        b.append(Gtk.Image.new_from_icon_name("emblem-ok-symbolic" if ld.installed else "dialog-warning-symbolic"))
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-        col.append(Gtk.Label(label=f"Cargador de mods: {ld.name} — " + ("instalado" if ld.installed else "no instalado"),
-                             xalign=0, css_classes=["heading"]))
-        col.append(Gtk.Label(label=ld.detail, xalign=0, wrap=True, selectable=True, css_classes=["caption"]))
+        icon = ("emblem-ok-symbolic" if ld.installed or ld.level == "none" else
+                "dialog-warning-symbolic" if ld.level == "required" else "dialog-information-symbolic")
+        b.append(Gtk.Image.new_from_icon_name(icon))
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+        title = f"Cargador de mods: {level}" + ("" if ld.level == "none" else f" — {ld.name}{state}")
+        col.append(Gtk.Label(label=title, xalign=0, css_classes=["heading"]))
+        col.append(Gtk.Label(label=(f"{ld.engine}. " if ld.engine and ld.engine not in ld.detail else "") + ld.detail,
+                             xalign=0, wrap=True, css_classes=["caption"]))
+        self.loader_links = Gtk.Box(spacing=6)
+        col.append(self.loader_links)
         b.append(col)
-        if ld.url and not ld.installed:
-            link = Gtk.Button(label="Conseguirlo", valign=Gtk.Align.CENTER, css_classes=["pill"])
+        if ld.url and not ld.installed and ld.level != "none":
+            link = Gtk.Button(label="Web oficial", valign=Gtk.Align.CENTER, css_classes=["pill"])
             link.connect("clicked", lambda *_: Gtk.UriLauncher.new(ld.url).launch(self.win, None, None))
             b.append(link)
         self.loader_box.append(b)
+        # Cargadores publicados en Nexus para este juego (se instalan como un mod más).
+        dom = self.ctx.state.nexus_domain
+        if dom and ld.search and not (ld.installed and ld.level != "none"):
+            def done(found):
+                if not found:
+                    return
+                self.loader_links.append(Gtk.Label(label="En Nexus:", css_classes=["caption", "dim-label"]))
+                for m in found:
+                    btn = Gtk.Button(label=f"{m.name} · {human_count(m.downloads)} ↓", css_classes=["pill", "flat"])
+                    btn.connect("clicked", lambda *_a, m=m: self.open_mod(m))
+                    self.loader_links.append(btn)
+            run_async(self.ctl.nexus.find_loaders, done, None, dom, ld.search)
         cmd = manager.me3_command(self.ctx)
         if cmd:
             # Para lanzar desde Steam: la orden de ME3 sustituye a la del juego («# %command%» la anula).
@@ -439,7 +464,7 @@ class GamePage(Adw.NavigationPage):
                               css_classes=["flat"])
             copy.connect("clicked", lambda *_: (self.get_clipboard().set(line), self.win.toast("Copiado")))
             s.append(copy)
-            self.loader_box.append(s)
+            self.launch_box.append(s)
 
     def play(self) -> None:
         cmd = manager.me3_command(self.ctx)

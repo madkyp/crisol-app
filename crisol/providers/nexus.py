@@ -217,6 +217,20 @@ class Nexus(ModProvider):
         m = data.get("mods") or {}
         return SearchPage([self._mod(n) for n in m.get("nodes") or []], int(m.get("totalCount") or 0))
 
+    def find_loaders(self, game_domain: str, terms: tuple) -> list[ModInfo]:
+        """Mods de cargadores publicados para el juego (p. ej. «BepInEx», «UE4SS»), el más descargado de cada uno."""
+        out: list[ModInfo] = []
+        for term in terms:
+            try:
+                page = self.search(game_domain, term, "downloads", 0, 5)
+            except ProviderError as e:
+                log.info("no se pudo buscar el cargador %s: %s", term, e)
+                continue
+            hits = [m for m in page.mods if term.lower() in m.name.lower()]
+            if hits and all(h.mod_id != o.mod_id for h in hits[:1] for o in out):
+                out.append(hits[0])
+        return out
+
     def mod(self, game_domain, mod_id) -> ModInfo:
         data = self._gql(f"""query($m:ID!,$g:ID!){{mod(modId:$m,gameId:$g){{ {_MOD_FIELDS}
             modRequirements {{ nexusRequirements {{ nodes {{ modId modName gameId url externalRequirement notes }} }} }}

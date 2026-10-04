@@ -69,10 +69,10 @@ class ModDialog(Adw.Dialog):
             if not nxm_handler.is_default():
                 txt += " ⚠ Crisol aún no es la app de los enlaces nxm: actívalo en Preferencias."
         ld = self.page.ctx.loader()
-        if ld and ld.needed:
+        if ld and ld.level == "required":
             txt += (f"\n\nEste juego carga los mods con {ld.name}: " +
-                    ("ya lo tienes." if ld.installed else "aún no lo tienes (ver pestaña «Instalados»)."))
-        elif ld and not ld.needed:
+                    ("ya lo tienes." if ld.installed else "aún no lo tienes."))
+        elif ld and ld.level == "none":
             txt += "\n\nEste juego no necesita cargador de mods."
         self.how.set_label(txt)
 
@@ -104,7 +104,26 @@ class ModDialog(Adw.Dialog):
                 self.old_files.add_row(self._file_row(f))
             self.files_group.add(self.old_files)
 
+    def _loader_check(self, full: ModInfo) -> None:
+        """¿Este mod pide un cargador? Se mira en sus requisitos y en su resumen."""
+        from ..layouts import loader_in_text
+        texts = [r.get("name", "") for r in full.requirements] + [full.summary]
+        name = next((n for n in (loader_in_text(t) for t in texts) if n), None)
+        if not name or loader_in_text(full.name):
+            return  # el propio mod es el cargador
+        st = self.page.ctx.state
+        ld = self.page.ctx.loader()
+        have = any(name.lower() in m.name.lower() for m in st.mods.values()) or \
+            bool(ld and ld.installed and name.lower() in ld.name.lower())
+        b = Gtk.Box(spacing=10, css_classes=["note-box"])
+        b.append(Gtk.Image.new_from_icon_name("emblem-ok-symbolic" if have else "dialog-warning-symbolic"))
+        b.append(Gtk.Label(label=f"Este mod necesita el cargador {name}: " + (
+            "ya lo tienes." if have else "no lo tienes. Instálalo primero (como un mod más) y ponlo arriba en la lista."),
+            xalign=0, wrap=True, hexpand=True))
+        self.box.insert_child_after(b, self.how)
+
     def _show_requirements(self, full: ModInfo) -> None:
+        self._loader_check(full)
         if not full.requirements:
             return
         st = self.page.ctx.state
