@@ -218,6 +218,33 @@ class FomodInstallTest(Base):
         self.assertEqual(len(self.ctx.state.mods), 1)
 
 
+class SavesTest(Base):
+    game_files = {"Game.exe": b"exe", "Game/Saved/SaveGames/1/slot.sav": b"v1"}
+
+    def test_find_backup_restore(self):
+        from crisol import saves
+        pfx = self.tmp / "pfx"
+        write(pfx, {"drive_c/users/steamuser/AppData/Roaming/Studio/G/steam_autocloud.vdf": b"x",
+                    "drive_c/users/steamuser/AppData/Roaming/Studio/G/save0.dat": b"p1",
+                    "drive_c/users/steamuser/AppData/Local/Temp/junk.sav": b"no"})
+        self.game.prefix = pfx
+        found = {(d.root, d.rel) for d in saves.find(self.game)}
+        self.assertEqual(found, {("prefix", "AppData/Roaming/Studio/G"), ("game", "Game/Saved/SaveGames/1")})
+        b = manager.backup_saves(self.ctx, "prueba")
+        self.assertIsNotNone(b)
+        self.assertIsNone(manager.backup_saves(self.ctx, "otra"))  # hace menos de 10 minutos
+        (self.game_dir / "Game/Saved/SaveGames/1/slot.sav").write_bytes(b"v2-roto")
+        n = saves.restore(self.game, b["id"])
+        self.assertEqual(n, 3)
+        self.assertEqual((self.game_dir / "Game/Saved/SaveGames/1/slot.sav").read_bytes(), b"v1")
+        self.assertEqual(len(saves.backups(self.game)), 2)  # + la copia «antes de restaurar»
+        # Restaurar la más antigua con el cupo lleno no la borra a mitad.
+        for _ in range(saves.KEEP):
+            saves.backup(self.game, "relleno")
+        oldest = saves.backups(self.game)[-1]["id"]
+        saves.restore(self.game, oldest)
+
+
 class RunningTest(Base):
     game_files = {"Game.exe": b"exe"}
 

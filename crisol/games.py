@@ -27,6 +27,7 @@ class Game:
     hero: Path | None = None    # imagen ancha de cabecera
     icon: Path | None = None    # icono pequeño
     logo: Path | None = None
+    prefix: Path | None = None  # prefijo de Wine/Proton (drive_c está dentro), si lo hay
 
     @property
     def safe_key(self) -> str:
@@ -113,8 +114,9 @@ def scan_steam() -> list[Game]:
             d = lib / "steamapps" / "common" / idir
             if not d.is_dir():
                 continue
+            pfx = lib / "steamapps" / "compatdata" / appid / "pfx"
             games.append(Game(key=f"steam:{appid}", source="steam", source_id=appid, name=name,
-                              install_dir=d, **_steam_art(root, appid)))
+                              install_dir=d, prefix=pfx if pfx.is_dir() else None, **_steam_art(root, appid)))
     return games
 
 
@@ -133,6 +135,7 @@ def scan_umbral() -> list[Game]:
     if not isinstance(cfg, dict):
         return []
     games: list[Game] = []
+    prefixes = {p.get("id"): p.get("path") for p in cfg.get("prefixes", []) if isinstance(p, dict)}
     for g in cfg.get("games", []):
         if g.get("kind") in _UMBRAL_SKIP_KINDS or g.get("hidden"):
             continue
@@ -141,8 +144,10 @@ def scan_umbral() -> list[Game]:
             continue
         cover = Path(g["cover"]) if g.get("cover") and Path(g["cover"]).is_file() else None
         icon = Path(g["icon"]) if g.get("icon") and Path(g["icon"]).is_file() else None
+        pfx = Path(prefixes[g["prefix_id"]]) if prefixes.get(g.get("prefix_id")) else None
         games.append(Game(key=f"umbral:{g['id']}", source="umbral", source_id=g["id"], name=g.get("name") or g["id"],
-                          install_dir=d, cover=cover, icon=icon))
+                          install_dir=d, cover=cover, icon=icon,
+                          prefix=pfx if pfx and (pfx / "drive_c").is_dir() else None))
     return games
 
 

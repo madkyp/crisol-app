@@ -582,6 +582,7 @@ class GamePage(Adw.NavigationPage):
         if not cmd:
             self.win.error("Falta Mod Engine 3", "No se ha encontrado ME3. Instala un mod que lo traiga o descárgalo.")
             return
+        manager.backup_saves(self.ctx, "antes de jugar con mods")
         log.info("lanzando: %s", cmd)
         logfile = paths.LOG_DIR / "me3.log"
         out = logfile.open("w")
@@ -1104,6 +1105,88 @@ class GameSettingsDialog(Adw.PreferencesDialog):
         if page.ctx.layout.external:
             pg.add(self._me3_group())
         self.add(pg)
+        self.add(self._saves_page())
+
+    def _saves_page(self) -> Adw.PreferencesPage:
+        from .. import saves
+        game = self.page.game
+        pg = Adw.PreferencesPage(title="Partidas", icon_name="document-save-symbolic")
+        where = Adw.PreferencesGroup(title="Dónde guarda este juego",
+                                     description="Crisol copia estas carpetas antes de aplicar mods o de jugar con "
+                                                 "ellos (como mucho cada 10 minutos; se guardan las 5 últimas copias).")
+        self._where = where
+        pg.add(where)
+        self._backups = Adw.PreferencesGroup(title="Copias")
+        now = Gtk.Button(label="Hacer una copia ahora", css_classes=["flat"], valign=Gtk.Align.CENTER)
+        now.connect("clicked", lambda *_: self._backup_now())
+        self._backups.set_header_suffix(now)
+        pg.add(self._backups)
+        self._rows: list = []
+
+        def found(dirs):
+            if not dirs:
+                where.add(Adw.ActionRow(title="No se han encontrado partidas",
+                                        subtitle="Puede que el juego guarde en la nube o en un sitio poco habitual."))
+            for d in dirs:
+                row = Adw.ActionRow(title=GLib.markup_escape_text(d.rel),
+                                    subtitle="prefijo de Proton" if d.root == "prefix" else "carpeta del juego")
+                row.add_suffix(Gtk.Label(label=human_size(d.size), css_classes=["dim-label"]))
+                where.add(row)
+        run_async(saves.find, found, None, game)
+        self._fill_backups()
+        return pg
+
+    def _fill_backups(self) -> None:
+        import time as _t
+        from .. import saves
+        for r in self._rows:
+            self._backups.remove(r)
+        self._rows = []
+        items = saves.backups(self.page.game)
+        if not items:
+            r = Adw.ActionRow(title="Aún no hay copias")
+            self._backups.add(r)
+            self._rows.append(r)
+        for b in items:
+            r = Adw.ActionRow(title=_t.strftime("%d/%m/%Y %H:%M", _t.localtime(b["time"])),
+                              subtitle=GLib.markup_escape_text(f"{b.get('reason', '')} · {human_size(b.get('size', 0))}"))
+            btn = Gtk.Button(label="Restaurar", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            btn.connect("clicked", lambda *_a, b=b: self._restore(b))
+            r.add_suffix(btn)
+            self._backups.add(r)
+            self._rows.append(r)
+
+    def _backup_now(self) -> None:
+        from .. import saves
+
+        def done(b):
+            self.add_toast(Adw.Toast(title="Copia hecha" if b else "No hay partidas que copiar"))
+            self._fill_backups()
+        run_async(saves.backup, done, lambda e: self.add_toast(Adw.Toast(title=GLib.markup_escape_text(str(e)))),
+                  self.page.game, "copia manual")
+
+    def _restore(self, b: dict) -> None:
+        from .. import saves
+        d = Adw.AlertDialog(heading="¿Restaurar estas partidas?",
+                            body="Las partidas actuales se sustituyen por las de la copia (antes se hace una copia "
+                                 "de las actuales, por si acaso). El juego debe estar cerrado.")
+        d.add_response("cancel", "Cancelar")
+        d.add_response("ok", "Restaurar")
+        d.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def resp(_d, r):
+            if r != "ok":
+                return
+            try:
+                manager.ensure_closed(self.page.ctx)
+                n = saves.restore(self.page.game, b["id"])
+            except Exception as e:  # noqa: BLE001
+                self.add_toast(Adw.Toast(title=GLib.markup_escape_text(str(e)), timeout=8))
+                return
+            self.add_toast(Adw.Toast(title=f"Partidas restauradas ({n} archivos)"))
+            self._fill_backups()
+        d.connect("response", resp)
+        d.present(self)
 
     def _me3_group(self) -> Adw.PreferencesGroup:
         st = self.page.ctx.state

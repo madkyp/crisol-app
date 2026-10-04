@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from . import archive, fomod, paths, running, secrets
+from . import archive, fomod, paths, running, saves, secrets
 from .deploy import Deployer, Plan, Report, make_plan
 from .games import Game
 from .layouts import LAYOUTS, Layout, LayoutError, detect
@@ -420,11 +420,23 @@ def ensure_closed(ctx: GameContext) -> None:
         raise running.GameRunning(ctx.game, procs)
 
 
+def backup_saves(ctx: GameContext, reason: str, every: float = 600) -> dict | None:
+    """Copia de las partidas (como mucho una cada `every` segundos). Nunca impide seguir si falla."""
+    try:
+        if saves.recent(ctx.game, every):
+            return None
+        return saves.backup(ctx.game, reason)
+    except OSError as e:
+        log.warning("no se pudo copiar las partidas de %s: %s", ctx.game.name, e)
+        return None
+
+
 def apply(ctx: GameContext, progress: Progress | None = None) -> Report:
     with game_lock(ctx.game):
         layout = ctx.layout
         if not layout.external:
             ensure_closed(ctx)
+            backup_saves(ctx, "antes de aplicar mods")
         if layout.external:
             # ME3: el juego no se toca; solo se escribe el perfil con los mods activos en orden.
             if ctx.deployer.is_deployed():
