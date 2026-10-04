@@ -1,32 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Crisol: 錬 (refinar, fundir metal) en el azulejo oscuro de Manhwa/Umbral/Control Deck (glifo: Noto Sans CJK JP Bold, OFL) -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2a2f3a"/>
-      <stop offset="1" stop-color="#14171e"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e2220"/>
+      <stop offset="1" stop-color="#140f0e"/>
     </linearGradient>
-    <linearGradient id="pot" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#6f7789"/>
-      <stop offset="0.45" stop-color="#c9cfdb"/>
-      <stop offset="1" stop-color="#5d6474"/>
-    </linearGradient>
-    <radialGradient id="melt" cx="0.5" cy="0.4" r="0.6">
-      <stop offset="0" stop-color="#ffe0a8"/>
-      <stop offset="0.5" stop-color="#ff9a4a"/>
+    <linearGradient id="glyph" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffe3c7"/>
+      <stop offset="0.55" stop-color="#ffa262"/>
       <stop offset="1" stop-color="#e0703a"/>
-    </radialGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#ff9a4a" stop-opacity="0.75"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.5">
+      <stop offset="0" stop-color="#e0703a" stop-opacity="0.28"/>
       <stop offset="1" stop-color="#e0703a" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
-  <ellipse cx="64" cy="44" rx="42" ry="24" fill="url(#glow)"/>
-  <!-- crisol -->
-  <path d="M30 44 L98 44 L90 94 Q88 102 80 102 L48 102 Q40 102 38 94 Z" fill="url(#pot)"/>
-  <ellipse cx="64" cy="44" rx="34" ry="9" fill="#4b5160"/>
-  <ellipse cx="64" cy="45" rx="30" ry="7" fill="url(#melt)"/>
-  <!-- chispas -->
-  <circle cx="56" cy="28" r="2.6" fill="#ffd8a8"/>
-  <circle cx="72" cy="22" r="2" fill="#ffc58a"/>
-  <circle cx="64" cy="16" r="1.6" fill="#ffe2c0"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#glow)"/>
+  <rect x="66" y="66" width="892" height="892" rx="198" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="4"/>
+  <path fill="url(#glyph)" transform="translate(226.27 730.10) scale(0.57318 -0.57318)" d="M62 269C78 214 92 141 93 93L174 115C170 162 156 233 139 289ZM339 296C333 248 317 178 304 133L377 114C391 155 408 218 425 276ZM446 596V236H581C544 172 491 112 432 68L428 108L293 83V326H418V427H293V504H396V604H391L434 655H635V596ZM184 850C153 771 95 677 10 606C33 590 67 552 82 528L100 545V504H189V427H52V326H189V64L41 41L64 -68L389 -2C409 -23 429 -48 441 -67C515 -21 583 53 635 139V-89H745V145C790 61 847 -16 905 -65C924 -36 961 4 987 25C918 72 848 153 802 236H939V596H745V655H959V759H745V850H635V759H424V713C385 759 329 811 283 850ZM545 376H635V324H545ZM745 376H835V324H745ZM545 510H635V457H545ZM745 510H835V457H745ZM155 604C194 650 225 696 249 739C291 699 335 645 363 604Z"/>
 </svg>
