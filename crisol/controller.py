@@ -69,12 +69,15 @@ class Controller:
     def games_for_domain(self, domain: str) -> list[Game]:
         return [g for g in self.games if self.domain(g) == domain]
 
-    def set_api_key(self, key: str | None) -> None:
+    def set_api_key(self, key: str | None) -> str:
+        """Guarda (o borra) la clave. Devuelve dónde quedó: "keyring", "file" o ""."""
+        where = ""
         if key:
-            secrets.set_nexus_key(key)
+            where = secrets.set_nexus_key(key)
         else:
             secrets.clear_nexus_key()
         self.nexus.api_key = key or None
+        return where
 
     @property
     def is_premium(self) -> bool:

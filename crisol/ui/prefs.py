@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from gi.repository import Adw, GLib, Gtk
 
-from .. import nxm_handler
+from .. import nxm_handler, secrets
 from .util import run_async
 
 ACCENTS = [("Brasa", "#e0703a"), ("Azul", "#3584e4"), ("Verde", "#2ec27e"), ("Violeta", "#9141ac"),
@@ -20,8 +20,9 @@ class PrefsDialog(Adw.PreferencesDialog):
 
         nx = Adw.PreferencesGroup(
             title="Nexus Mods",
-            description="Tu API key personal se guarda en el llavero del sistema (libsecret), no en un archivo. "
-                        "Buscar mods no la necesita; descargar sí.")
+            description="Tu API key personal se guarda en el llavero del sistema (Secret Service). Si no hay "
+                        "llavero, en un archivo que solo tu usuario puede leer. Buscar mods no la necesita; "
+                        "descargar sí.")
         self.key = Adw.PasswordEntryRow(title="API key personal", show_apply_button=True)
         if self.ctl.nexus.api_key:
             self.key.set_text(self.ctl.nexus.api_key)
@@ -30,6 +31,9 @@ class PrefsDialog(Adw.PreferencesDialog):
         self.account = Adw.ActionRow(title="Cuenta")
         self.account.add_css_class("property")
         nx.add(self.account)
+        self.where = Adw.ActionRow(title="Guardada en")
+        self.where.add_css_class("property")
+        nx.add(self.where)
         get = Adw.ActionRow(title="Conseguir la API key", subtitle="nexusmods.com → Preferencias → API → Personal API Key",
                             activatable=True)
         get.add_suffix(Gtk.Image.new_from_icon_name("adw-external-link-symbolic"))
@@ -74,6 +78,15 @@ class PrefsDialog(Adw.PreferencesDialog):
         self._refresh_nxm()
 
     def _refresh_account(self) -> None:
+        where = secrets.storage()
+        self.where.set_visible(bool(where))
+        if where == "keyring":
+            self.where.set_subtitle("Llavero del sistema")
+        elif where == "file":
+            self.where.set_subtitle(GLib.markup_escape_text(
+                f"{secrets.KEY_FILE} (permisos 600). No hay llavero del sistema: instala y activa "
+                "gnome-keyring o el Secret Service de KWallet si prefieres guardarla ahí."))
+            self.where.set_subtitle_lines(3)
         a = self.ctl.account
         if not self.ctl.nexus.api_key:
             self.account.set_subtitle("Sin API key")
@@ -94,7 +107,11 @@ class PrefsDialog(Adw.PreferencesDialog):
 
     def _save_key(self, row) -> None:
         key = row.get_text().strip()
-        self.ctl.set_api_key(key or None)
+        try:
+            self.ctl.set_api_key(key or None)
+        except Exception as e:  # noqa: BLE001 — se muestra, no se pierde
+            self.add_toast(Adw.Toast(title=GLib.markup_escape_text(f"No se pudo guardar la clave: {e}"), timeout=8))
+            return
         self.account.set_subtitle("Comprobando…")
 
         def done(_a):
@@ -105,7 +122,10 @@ class PrefsDialog(Adw.PreferencesDialog):
         run_async(self.ctl.validate_account, done)
 
     def _forget(self, *_):
-        self.ctl.set_api_key(None)
+        try:
+            self.ctl.set_api_key(None)
+        except Exception as e:  # noqa: BLE001
+            self.add_toast(Adw.Toast(title=GLib.markup_escape_text(f"No se pudo borrar: {e}")))
         self.ctl.account = None
         self.key.set_text("")
         self._refresh_account()

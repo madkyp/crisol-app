@@ -206,7 +206,7 @@ class Nexus(ModProvider):
         f: dict = {"gameDomainName": [{"value": game_domain, "op": "EQUALS"}]}
         if not self.show_adult:  # como la web sin sesión: el contenido adulto, oculto
             f["adultContent"] = [{"value": False, "op": "EQUALS"}]
-        if query.strip():
+        if len(query.strip()) >= 2:  # Nexus rechaza comodines de menos de 2 letras
             f["name"] = [{"value": query.strip(), "op": "WILDCARD"}]
         if sort == "relevance" and not query.strip():
             sort = "downloads"
