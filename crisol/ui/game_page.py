@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import subprocess
 from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
-from .. import manager
+from .. import manager, paths
 from ..deploy import Conflict, Plan
 from ..games import Game
 from ..layouts import LAYOUTS
@@ -445,8 +447,38 @@ class GamePage(Adw.NavigationPage):
             self.win.error("Falta Mod Engine 3", "No se ha encontrado ME3. Instala un mod que lo traiga o descárgalo.")
             return
         log.info("lanzando: %s", cmd)
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        logfile = paths.LOG_DIR / "me3.log"
+        out = logfile.open("w")
+        # Sin colores ANSI en el registro, para poder leerlo y mostrarlo.
+        env = {**os.environ, "NO_COLOR": "1"}
+        proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, env=env)
+        out.close()
         self.win.toast("Lanzando el juego con ME3… (Steam debe estar abierto)", 6)
+        ticks = [0]
+
+        def watch():
+            ticks[0] += 1
+            code = proc.poll()
+            if code is None:
+                return ticks[0] < 60  # se sigue mirando hasta 30 s; si sigue vivo, todo bien
+            if code != 0:
+                self._me3_failed(logfile)
+            return False
+        GLib.timeout_add(500, watch)
+
+    def _me3_failed(self, logfile: Path) -> None:
+        text = re.sub(r"\x1b\[[0-9;]*m", "", logfile.read_text(errors="replace"))
+        errors = [l for l in text.splitlines() if "ERROR" in l] or text.splitlines()[-3:]
+        msg = errors[-1].split("error=")[-1].strip() if errors else "error desconocido"
+        hint = ""
+        m = re.search(r"Proton runtime (\S+)", msg)
+        if m:
+            hint = (f"\n\nME3 usa el Proton que Steam tiene asignado al juego ({m.group(1)}) y no está instalado. "
+                    "En Steam: el juego → Propiedades → Compatibilidad → «Forzar el uso de una herramienta de "
+                    "compatibilidad específica» → elige uno que tengas (p. ej. Proton Experimental).")
+        elif "steam" in msg.lower():
+            hint = "\n\nAbre Steam (con tu sesión iniciada) y vuelve a pulsar «Jugar con mods»."
+        self.win.error("ME3 no ha podido lanzar el juego", f"{msg}{hint}\n\nRegistro completo: {logfile}")
 
     def changed(self) -> None:
         """Tras cualquier cambio de orden/estado: guardar y repintar."""
