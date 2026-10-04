@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 from .games import Game
+from .i18n import _
 
 
 def _cmdline(pid: str) -> list[str]:
@@ -34,7 +35,7 @@ def _umbral_running(game: Game) -> list[str]:
     out = []
     for g in data.get("games", []):
         if g.get("id") == game.source_id and Path(f"/proc/{g.get('pid')}").exists():
-            out.append(g.get("exe_name") or g.get("name") or "juego")
+            out.append(g.get("exe_name") or g.get("name") or _("juego"))
     return out
 
 
@@ -56,7 +57,7 @@ def running(game: Game) -> list[str]:
         if not args or not args[0]:
             continue
         if steam_tag and "SteamLaunch" in args and steam_tag in args:
-            found.append(f"Steam ({game.name})")
+            found.append(_('Steam ({0})').format(game.name))
             continue
         joined = " ".join(args).lower()
         if ".exe" not in joined:
@@ -73,5 +74,5 @@ def running(game: Game) -> list[str]:
 
 class GameRunning(Exception):
     def __init__(self, game: Game, procs: list[str]):
-        super().__init__(f"«{game.name}» está abierto ({', '.join(procs[:3])}). Ciérralo antes de cambiar sus mods.")
+        super().__init__(_('«{0}» está abierto ({1}). Ciérralo antes de cambiar sus mods.').format(game.name, ', '.join(procs[:3])))
         self.procs = procs

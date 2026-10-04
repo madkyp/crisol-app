@@ -23,6 +23,7 @@ from .layouts import LAYOUTS, Layout, LayoutError, detect
 from .providers.base import ProviderError
 from .providers.nexus import Nexus, NxmLink
 from .store import GameState, ModRecord
+from .i18n import _
 
 log = logging.getLogger(__name__)
 Progress = Callable[[float, str], None]
@@ -112,22 +113,20 @@ def download(url: str, dest: Path, expected_size: int = 0, progress: Progress | 
                     for chunk in r.iter_content(1 << 20):
                         if cancel and cancel.is_set():
                             # El .part se conserva para poder reanudar más tarde.
-                            raise DownloadError("Descarga cancelada (se podrá reanudar)")
+                            raise DownloadError(_('Descarga cancelada (se podrá reanudar)'))
                         f.write(chunk)
                         done += len(chunk)
                         if progress and total:
                             extra = " (reanudada)" if resumed else ""
                             progress(done / total, f"{done / 1e6:.1f} / {total / 1e6:.1f} MB{extra}")
     except requests.RequestException as e:
-        raise DownloadError(f"La descarga se ha cortado: {e}. Vuelve a pulsar «Slow download» y "
-                            "continuará donde se quedó.") from e
+        raise DownloadError(_('La descarga se ha cortado: {0}. Vuelve a pulsar «Slow download» y continuará donde se quedó.').format(e)) from e
     if expected_size and tmp.stat().st_size != expected_size:
         got = tmp.stat().st_size
         if got > expected_size:
             tmp.unlink(missing_ok=True)
-            raise DownloadError(f"Descarga dañada: {got} bytes, se esperaban {expected_size}. Se ha borrado.")
-        raise DownloadError(f"Descarga incompleta ({got / 1e6:.1f} de {expected_size / 1e6:.1f} MB). "
-                            "Vuelve a pulsar «Slow download» y continuará donde se quedó.")
+            raise DownloadError(_('Descarga dañada: {0} bytes, se esperaban {1}. Se ha borrado.').format(got, expected_size))
+        raise DownloadError(_('Descarga incompleta ({0:.1f} de {1:.1f} MB). Vuelve a pulsar «Slow download» y continuará donde se quedó.').format(got / 1e6, expected_size / 1e6))
     tmp.replace(dest)
     return dest
 
@@ -146,7 +145,7 @@ def download_nexus(nexus: Nexus, link: NxmLink, progress: Progress | None = None
     finfo = files.get(link.file_id)
     urls = nexus.download_urls(link.domain, link.mod_id, link.file_id, link.key, link.expires)
     if not urls:
-        raise DownloadError("Nexus Mods no ha dado ningún enlace de descarga")
+        raise DownloadError(_('Nexus Mods no ha dado ningún enlace de descarga'))
     fname = _safe_name(finfo.file_name if finfo and finfo.file_name else Path(urls[0].split("?")[0]).name)
     dest = paths.DOWNLOADS_DIR / link.domain / fname
     expected = finfo.size if finfo else 0
@@ -160,7 +159,7 @@ def download_nexus(nexus: Nexus, link: NxmLink, progress: Progress | None = None
                 raise
             last = e
     else:
-        raise last or DownloadError("La descarga ha fallado")
+        raise last or DownloadError(_('La descarga ha fallado'))
     if not archive.is_archive(dest) or not dest.name.lower().endswith(archive.ARCHIVE_EXTS):
         ext = archive.sniff(dest)
         if ext:
@@ -176,7 +175,7 @@ def download_nexus(nexus: Nexus, link: NxmLink, progress: Progress | None = None
             verified = "md5"
         elif hits:
             dest.unlink(missing_ok=True)
-            raise DownloadError("El archivo descargado no coincide con el de Nexus Mods (md5). Se ha borrado.")
+            raise DownloadError(_('El archivo descargado no coincide con el de Nexus Mods (md5). Se ha borrado.'))
     except ProviderError as e:
         log.warning("no se pudo verificar el md5: %s", e)
     meta = {"md5": md5, "size": dest.stat().st_size, "file_name": fname,
@@ -208,9 +207,9 @@ def _apply_fomod(ctx: GameContext, tmp: Path, rec: ModRecord, chooser: FomodChoo
     choice = chooser(module, mod_root, previous) if chooser else (previous or fomod.default_choice(
         module, ctx.game.install_dir))
     if choice is None:
-        raise InstallCancelled("Instalación cancelada")
+        raise InstallCancelled(_('Instalación cancelada'))
     if progress:
-        progress(0.5, "Instalando las opciones elegidas…")
+        progress(0.5, _('Instalando las opciones elegidas…'))
     out = tmp.with_name(tmp.name + ".fomod")
     shutil.rmtree(out, ignore_errors=True)
     fomod.build(module, choice, mod_root, out, ctx.game.install_dir)
@@ -229,7 +228,7 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     final = st.staging(rec.uid)
     tmp = final.with_name(final.name + ".new")
     if progress:
-        progress(0.0, "Extrayendo…")
+        progress(0.0, _('Extrayendo…'))
     archive.extract(archive_path, tmp)
     try:
         _apply_fomod(ctx, tmp, rec, chooser, progress)
@@ -258,7 +257,7 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     st.add(rec)
     st.save()
     if progress:
-        progress(1.0, "Instalado")
+        progress(1.0, _('Instalado'))
     return rec
 
 
@@ -338,7 +337,7 @@ def install_manual(ctx: GameContext, archive_path: Path, layout_id: str | None =
 def install_from_nxm(ctx: GameContext, nexus: Nexus, link: NxmLink, progress: Progress | None = None,
                      cancel: threading.Event | None = None, chooser: FomodChooser | None = None) -> ModRecord:
     if ctx.state.nexus_domain and link.domain != ctx.state.nexus_domain:
-        raise DownloadError(f"El enlace es de otro juego ({link.domain})")
+        raise DownloadError(_('El enlace es de otro juego ({0})').format(link.domain))
     info = nexus.mod(link.domain, link.mod_id)
 
     def dl_progress(f: float, msg: str) -> None:
@@ -436,7 +435,7 @@ def apply(ctx: GameContext, progress: Progress | None = None) -> Report:
         layout = ctx.layout
         if not layout.external:
             ensure_closed(ctx)
-            backup_saves(ctx, "antes de aplicar mods")
+            backup_saves(ctx, _('antes de aplicar mods'))
         if layout.external:
             # ME3: el juego no se toca; solo se escribe el perfil con los mods activos en orden.
             if ctx.deployer.is_deployed():
@@ -446,7 +445,7 @@ def apply(ctx: GameContext, progress: Progress | None = None) -> Report:
             ctx.me3_profile.write_text(layout.profile_text(mods, ctx.state.staging))
             ctx.state.dirty_deploy = False
             ctx.state.save()
-            return Report(placed=sum(len(m.packages) + len(m.natives) for m in mods), method="perfil ME3")
+            return Report(placed=sum(len(m.packages) + len(m.natives) for m in mods), method=_("perfil ME3"))
         return ctx.deployer.deploy(ctx.state, layout, progress)
 
 
@@ -486,7 +485,7 @@ def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None,
         ensure_closed(ctx)  # con ME3 el juego lee los archivos del staging mientras está abierto
     path = Path(rec.archive)
     if not path.is_file():
-        raise DownloadError("Ya no está el archivo descargado de este mod; vuelve a descargarlo.")
+        raise DownloadError(_('Ya no está el archivo descargado de este mod; vuelve a descargarlo.'))
     if not path.name.lower().endswith(archive.ARCHIVE_EXTS) and archive.sniff(path):
         path = path.rename(path.with_name(path.name + archive.sniff(path)))
         rec.file_name = path.name

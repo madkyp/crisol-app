@@ -5,6 +5,7 @@ from gi.repository import Adw, GLib, Gtk, Pango
 
 from ..providers.base import CollectionInfo
 from .util import human_count, human_size, load_remote, run_async
+from ..i18n import _
 
 
 class CollectionCard(Gtk.Box):
@@ -20,7 +21,7 @@ class CollectionCard(Gtk.Box):
                       margin_top=10, margin_bottom=12)
         col.append(Gtk.Label(label=info.name, xalign=0, ellipsize=Pango.EllipsizeMode.END, css_classes=["mod-name"],
                              max_width_chars=1, hexpand=True, tooltip_text=info.name))
-        col.append(Gtk.Label(label=f"{info.author} · {info.mod_count} mods · {human_size(info.size)}", xalign=0,
+        col.append(Gtk.Label(label=_("{0} · {1} mods · {2}").format(info.author, info.mod_count, human_size(info.size)), xalign=0,
                              ellipsize=Pango.EllipsizeMode.END, css_classes=["mod-meta"], max_width_chars=1))
         col.append(Gtk.Label(label=info.summary, xalign=0, wrap=True, lines=2, ellipsize=Pango.EllipsizeMode.END,
                              css_classes=["mod-summary"], height_request=36, valign=Gtk.Align.START,
@@ -52,29 +53,27 @@ class CollectionDialog(Adw.Dialog):
         box.append(frame)
         box.append(Gtk.Label(label=info.name, xalign=0, wrap=True, css_classes=["title-1"]))
         meta = Gtk.Box(spacing=8)
-        for t in (f"por {info.author}", f"revisión {info.revision}", f"{info.mod_count} mods", human_size(info.size),
+        for t in (_('por {0}').format(info.author), _('revisión {0}').format(info.revision), _("{0} mods").format(info.mod_count), human_size(info.size),
                   f"{human_count(info.downloads)} descargas"):
             meta.append(Gtk.Label(label=t, css_classes=["chip"]))
         box.append(meta)
         box.append(Gtk.Label(label=info.summary, xalign=0, wrap=True))
         web = Gtk.Button(halign=Gtk.Align.START, css_classes=["flat"])
-        web.set_child(Adw.ButtonContent(icon_name="web-browser-symbolic", label="Abrir en Nexus Mods"))
-        web.connect("clicked", lambda *_: Gtk.UriLauncher.new(
+        web.set_child(Adw.ButtonContent(icon_name="web-browser-symbolic", label=_('Abrir en Nexus Mods')))
+        web.connect("clicked", lambda *_u: Gtk.UriLauncher.new(
             f"https://www.nexusmods.com/games/{self.domain}/collections/{info.slug}").launch(self.win, None, None))
         box.append(web)
-        how = ("Cuenta Premium: se descargan e instalan uno tras otro." if page.ctl.is_premium else
-               "Sin Premium, Nexus pide pulsar «Slow download» en cada mod: Crisol abre la página de cada uno por "
-               "turnos y pasa al siguiente en cuanto llega el enlace.")
-        box.append(Gtk.Label(label=how + " Se instalan en el orden de la colección. Las opciones de los "
-                             "instaladores FOMOD las eliges tú (no se copian las del autor).",
+        how = (_('Cuenta Premium: se descargan e instalan uno tras otro.') if page.ctl.is_premium else
+               _('Sin Premium, Nexus pide pulsar «Slow download» en cada mod: Crisol abre la página de cada uno por turnos y pasa al siguiente en cuanto llega el enlace.'))
+        box.append(Gtk.Label(label=how + _(' Se instalan en el orden de la colección. Las opciones de los instaladores FOMOD las eliges tú (no se copian las del autor).'),
                              xalign=0, wrap=True, css_classes=["dim-label", "caption"]))
-        self.group = Adw.PreferencesGroup(title="Mods de la colección")
+        self.group = Adw.PreferencesGroup(title=_('Mods de la colección'))
         self.spinner = Adw.Spinner(height_request=32)
         self.group.add(self.spinner)
         box.append(self.group)
-        self.install = Gtk.Button(label="Instalar", halign=Gtk.Align.END, css_classes=["pill", "suggested-action"],
+        self.install = Gtk.Button(label=_('Instalar'), halign=Gtk.Align.END, css_classes=["pill", "suggested-action"],
                                   sensitive=False)
-        self.install.connect("clicked", lambda *_: self._install())
+        self.install.connect("clicked", lambda *_u: self._install())
         box.append(self.install)
         tv.set_content(Gtk.ScrolledWindow(child=box, hscrollbar_policy=Gtk.PolicyType.NEVER))
         self.set_child(tv)
@@ -83,7 +82,7 @@ class CollectionDialog(Adw.Dialog):
 
     def _failed(self, e):
         self.group.remove(self.spinner)
-        self.group.add(Adw.ActionRow(title="No se pudo cargar la colección", subtitle=GLib.markup_escape_text(str(e))))
+        self.group.add(Adw.ActionRow(title=_('No se pudo cargar la colección'), subtitle=GLib.markup_escape_text(str(e))))
 
     def _loaded(self, mods):
         self.group.remove(self.spinner)
@@ -98,20 +97,20 @@ class CollectionDialog(Adw.Dialog):
             check = Gtk.CheckButton(valign=Gtk.Align.CENTER, active=not m.optional and not exact and not other)
             if exact:
                 check.set_sensitive(False)
-                row.add_suffix(Gtk.Label(label="Instalado", css_classes=["chip", "success"], valign=Gtk.Align.CENTER))
+                row.add_suffix(Gtk.Label(label=_('Instalado'), css_classes=["chip", "success"], valign=Gtk.Align.CENTER))
             elif other:
-                row.add_suffix(Gtk.Label(label=f"Tienes v{other.version}", css_classes=["chip", "warning"],
-                                         valign=Gtk.Align.CENTER, tooltip_text="Márcalo para cambiarlo por el de la colección"))
+                row.add_suffix(Gtk.Label(label=_('Tienes v{0}').format(other.version), css_classes=["chip", "warning"],
+                                         valign=Gtk.Align.CENTER, tooltip_text=_('Márcalo para cambiarlo por el de la colección')))
             row.add_prefix(check)
             row.set_activatable_widget(check)
-            check.connect("toggled", lambda *_: self._count())
+            check.connect("toggled", lambda *_u: self._count())
             self.checks.append((check, m))
             self.group.add(row)
         self._count()
 
     def _count(self):
-        n = sum(1 for c, _ in self.checks if c.get_active())
-        self.install.set_label(f"Instalar {n} mods" if n != 1 else "Instalar 1 mod")
+        n = sum(1 for c, _u in self.checks if c.get_active())
+        self.install.set_label(_('Instalar {0} mods').format(n) if n != 1 else _('Instalar 1 mod'))
         self.install.set_sensitive(n > 0 and bool(self.page.ctl.nexus.api_key))
 
     def _install(self):

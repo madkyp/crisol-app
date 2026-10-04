@@ -9,6 +9,7 @@ from . import jsonio, paths
 @dataclass
 class Config:
     accent: str = "#e0703a"
+    language: str = ""           # "" = el del sistema, "es" o "en" (se aplica al reiniciar)
     show_all_games: bool = False
     show_adult: bool = False
     keep_archives: bool = True   # guardar el archivo descargado (permite reinstalar sin volver a bajarlo)

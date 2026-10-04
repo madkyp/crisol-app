@@ -25,6 +25,7 @@ from pathlib import Path
 from . import jsonio, paths
 from .layouts import Layout
 from .store import GameState
+from .i18n import _
 
 log = logging.getLogger(__name__)
 FICLONE = 0x40049409
@@ -86,7 +87,7 @@ def ci_resolve(root: Path, rel: str) -> Path:
 def _safe_rel(rel: str) -> str:
     parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")]
     if not parts or ".." in parts:
-        raise DeployError(f"Ruta no permitida en un mod: {rel}")
+        raise DeployError(_('Ruta no permitida en un mod: {0}').format(rel))
     return "/".join(parts)
 
 
@@ -129,7 +130,7 @@ def make_plan(state: GameState, layout: Layout, with_internal: bool = False) -> 
     # Las claves en minúsculas evitan dos archivos «iguales para Wine»; se recupera la ruta real.
     real: dict[str, str] = {}
     for pos, m in enumerate(mods, start=1):
-        for _, dst in m.files:
+        for _u, dst in m.files:
             t = _safe_rel(layout.target(dst, pos))
             real[t.lower()] = t
     plan.files = {real[k]: v for k, v in plan.files.items()}
@@ -149,7 +150,7 @@ def internal_conflicts(state: GameState, layout: Layout) -> list[Conflict]:
     owners: dict[str, list[str]] = {}
     for m in state.enabled_ordered():
         seen: set[str] = set()
-        for src, _ in m.files:
+        for src, _u in m.files:
             for entry in layout.internal_entries(state.staging(m.uid) / src):
                 if entry not in seen:
                     seen.add(entry)
@@ -177,8 +178,7 @@ class Deployer:
         plan = make_plan(state, layout)
         for uid, src in plan.files.values():
             if not src.is_file():
-                raise DeployError(f"Falta un archivo del mod «{state.mods[uid].name}»: {src.name}. "
-                                  "Reinstálalo.")
+                raise DeployError(_('Falta un archivo del mod «{0}»: {1}. Reinstálalo.').format(state.mods[uid].name, src.name))
         man = {"game_dir": str(self.root), "profile": state.active, "time": time.time(), "files": {}, "dirs": []}
         methods: set[str] = set()
         items: list[tuple[str, str, Path | bytes]] = [(t, u, s) for t, (u, s) in plan.files.items()]
@@ -193,11 +193,10 @@ class Deployer:
                 backup = False
                 if dst.exists() or dst.is_symlink():
                     if dst.is_dir():
-                        raise DeployError(f"Un mod quiere poner un archivo donde el juego tiene una carpeta: {rel}")
+                        raise DeployError(_('Un mod quiere poner un archivo donde el juego tiene una carpeta: {0}').format(rel))
                     bk = self.backup_root / rel
                     if bk.exists():
-                        raise DeployError(f"Ya hay una copia de seguridad de {rel}; no se sobrescribe. "
-                                          "Revisa backups/ antes de seguir.")
+                        raise DeployError(_('Ya hay una copia de seguridad de {0}; no se sobrescribe. Revisa backups/ antes de seguir.').format(rel))
                     bk.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(dst, bk)
                     backup = True

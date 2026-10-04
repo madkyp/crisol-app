@@ -12,6 +12,7 @@ from ..games import Game
 from ..providers.base import ProviderError
 from ..providers.nexus import parse_nxm
 from .util import local_texture, placeholder, run_async
+from ..i18n import _
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +36,9 @@ class Task:
         col.append(self.progress)
         self.row.append(col)
         if cancellable:
-            b = Gtk.Button(icon_name="process-stop-symbolic", tooltip_text="Cancelar", valign=Gtk.Align.CENTER,
+            b = Gtk.Button(icon_name="process-stop-symbolic", tooltip_text=_('Cancelar'), valign=Gtk.Align.CENTER,
                            css_classes=["flat", "circular"])
-            b.connect("clicked", lambda *_: self.cancel.set())
+            b.connect("clicked", lambda *_u: self.cancel.set())
             self.row.append(b)
         self._pulse = GLib.timeout_add(120, self._do_pulse)
         self._known = False
@@ -109,11 +110,11 @@ class GameCard(Gtk.Box):
         if n:
             badges = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, halign=Gtk.Align.END,
                              valign=Gtk.Align.START, margin_top=8, margin_end=8)
-            badges.append(Gtk.Label(label=f"{len(st.profile.enabled)}/{n} mods", css_classes=["chip", "accent"],
+            badges.append(Gtk.Label(label=_("{0}/{1} mods").format(len(st.profile.enabled), n), css_classes=["chip", "accent"],
                                     halign=Gtk.Align.END))
             upd = sum(1 for m in st.mods.values() if m.update_available)
             if upd:
-                badges.append(Gtk.Label(label=f"{upd} actualización" + ("es" if upd > 1 else ""),
+                badges.append(Gtk.Label(label=(_("{0} actualizaciones") if upd > 1 else _("1 actualización")).format(upd),
                                         css_classes=["chip", "success"], halign=Gtk.Align.END))
             cover.add_overlay(badges)
         self.append(cover)
@@ -124,7 +125,7 @@ class GameCard(Gtk.Box):
         meta = Gtk.Box(spacing=6)
         meta.append(Gtk.Label(label="Steam" if game.source == "steam" else "Umbral", css_classes=["chip", game.source]))
         if not ctl.compatible(game):
-            meta.append(Gtk.Label(label="Sin Nexus", css_classes=["chip"]))
+            meta.append(Gtk.Label(label=_('Sin Nexus'), css_classes=["chip"]))
         info.append(name)
         info.append(meta)
         self.append(info)
@@ -139,31 +140,31 @@ class LibraryPage(Adw.NavigationPage):
         self.ctl = win.ctl
         tv = Adw.ToolbarView()
         hb = Adw.HeaderBar()
-        self.search = Gtk.SearchEntry(placeholder_text="Buscar juego…", width_chars=26)
-        self.search.connect("search-changed", lambda *_: self.grid.invalidate_filter())
+        self.search = Gtk.SearchEntry(placeholder_text=_('Buscar juego…'), width_chars=26)
+        self.search.connect("search-changed", lambda *_u: self.grid.invalidate_filter())
         hb.set_title_widget(self.search)
         menu = Gio.Menu()
-        menu.append("Preferencias", "win.prefs")
-        menu.append("Volver a buscar juegos", "win.rescan")
-        menu.append(f"Acerca de {APP_NAME}", "win.about")
-        hb.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text="Menú"))
+        menu.append(_('Preferencias'), "win.prefs")
+        menu.append(_('Volver a buscar juegos'), "win.rescan")
+        menu.append(_('Acerca de {0}').format(APP_NAME), "win.about")
+        hb.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text=_('Menú')))
         tv.add_top_bar(hb)
 
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_start=32, margin_end=32,
                        margin_top=20, margin_bottom=24)
         head = Gtk.Box(spacing=12)
         titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-        titles.append(Gtk.Label(label="Biblioteca", xalign=0, css_classes=["library-title"]))
-        self.sub = Gtk.Label(label="Buscando juegos…", xalign=0, css_classes=["library-sub"])
+        titles.append(Gtk.Label(label=_('Biblioteca'), xalign=0, css_classes=["library-title"]))
+        self.sub = Gtk.Label(label=_('Buscando juegos…'), xalign=0, css_classes=["library-sub"])
         titles.append(self.sub)
         head.append(titles)
-        self.source = Gtk.DropDown.new_from_strings(["Todos", "Steam", "Umbral"])
+        self.source = Gtk.DropDown.new_from_strings([_('Todos'), "Steam", "Umbral"])
         self.source.set_valign(Gtk.Align.CENTER)
-        self.source.connect("notify::selected", lambda *_: self.grid.invalidate_filter())
+        self.source.connect("notify::selected", lambda *_u: self.grid.invalidate_filter())
         head.append(self.source)
-        self.show_all = Gtk.ToggleButton(label="Mostrar todos", valign=Gtk.Align.CENTER,
+        self.show_all = Gtk.ToggleButton(label=_('Mostrar todos'), valign=Gtk.Align.CENTER,
                                          active=self.ctl.cfg.show_all_games,
-                                         tooltip_text="Mostrar también los juegos que no tienen mods en Nexus Mods")
+                                         tooltip_text=_('Mostrar también los juegos que no tienen mods en Nexus Mods'))
         self.show_all.connect("toggled", self._toggle_all)
         head.append(self.show_all)
         body.append(head)
@@ -177,9 +178,8 @@ class LibraryPage(Adw.NavigationPage):
         self.stack.add_named(Adw.Spinner(halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
                                          width_request=48, height_request=48), "loading")
         self.stack.add_named(self.grid, "grid")
-        self.empty = Adw.StatusPage(icon_name="applications-games-symbolic", title="No hay juegos compatibles",
-                                    description="No se ha encontrado ningún juego de Steam o Umbral con mods en "
-                                                "Nexus Mods. Pulsa «Mostrar todos» para verlos igualmente.")
+        self.empty = Adw.StatusPage(icon_name="applications-games-symbolic", title=_('No hay juegos compatibles'),
+                                    description=_('No se ha encontrado ningún juego de Steam o Umbral con mods en Nexus Mods. Pulsa «Mostrar todos» para verlos igualmente.'))
         self.stack.add_named(self.empty, "empty")
         body.append(self.stack)
         scroll = Gtk.ScrolledWindow(child=body, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
@@ -206,7 +206,7 @@ class LibraryPage(Adw.NavigationPage):
         for g in shown:
             self.grid.append(GameCard(self.ctl, g))
         compat = sum(1 for g in games if self.ctl.compatible(g))
-        self.sub.set_label(f"{len(games)} juegos detectados · {compat} con mods en Nexus Mods")
+        self.sub.set_label(_("{0} juegos detectados · {1} con mods en Nexus Mods").format(len(games), compat))
         self.stack.set_visible_child_name("grid" if shown else "empty")
 
     def loading(self) -> None:
@@ -244,7 +244,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rescan()
         run_async(self.ctl.validate_account, lambda _r: self._account_checked())
 
-    def _on_close(self, *_):
+    def _on_close(self, *_u):
         w, h = self.get_default_size()
         self.ctl.cfg.window_width, self.ctl.cfg.window_height = w, h
         self.ctl.cfg.save()
@@ -257,7 +257,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def error(self, title: str, err: Exception | str) -> None:
         d = Adw.AlertDialog(heading=title, body=str(err))
-        d.add_response("ok", "Aceptar")
+        d.add_response("ok", _('Aceptar'))
         d.present(self)
 
     def rescan(self) -> None:
@@ -274,7 +274,7 @@ class MainWindow(Adw.ApplicationWindow):
             for u in self._pending_nxm:
                 self.handle_nxm(u)
             self._pending_nxm.clear()
-        run_async(self.ctl.scan, done, lambda e: self.error("No se pudieron leer los juegos", e))
+        run_async(self.ctl.scan, done, lambda e: self.error(_('No se pudieron leer los juegos'), e))
 
     def _auto_check_updates(self) -> None:
         """Al arrancar, como mucho cada 12 h por juego: ¿hay versiones nuevas de los mods instalados?"""
@@ -299,7 +299,7 @@ class MainWindow(Adw.ApplicationWindow):
             if page:
                 page.refresh_installed()
             if total:
-                self.toast(f"Hay {total} mods con actualización", 6)
+                self.toast(_('Hay {0} mods con actualización').format(total), 6)
         run_async(work, done)
 
     def _account_checked(self) -> None:
@@ -331,18 +331,16 @@ class MainWindow(Adw.ApplicationWindow):
         try:
             link = parse_nxm(uri)
         except ProviderError as e:
-            self.error("Enlace no válido", e)
+            self.error(_('Enlace no válido'), e)
             return
         games = self.ctl.games_for_domain(link.domain)
         if not games:
-            self.error("Juego no encontrado",
-                       f"El enlace es de «{link.domain}», pero no hay ningún juego de Steam o Umbral instalado "
-                       "enlazado con ese juego de Nexus Mods.")
+            self.error(_('Juego no encontrado'),
+                       _('El enlace es de «{0}», pero no hay ningún juego de Steam o Umbral instalado enlazado con ese juego de Nexus Mods.').format(link.domain))
             return
         if not self.ctl.nexus.api_key:
-            self.error("Falta la API key de Nexus Mods",
-                       "Para descargar hace falta tu API key personal. Ponla en Preferencias → Nexus Mods "
-                       "y vuelve a pulsar «Mod Manager Download» en la web.")
+            self.error(_('Falta la API key de Nexus Mods'),
+                       _('Para descargar hace falta tu API key personal. Ponla en Preferencias → Nexus Mods y vuelve a pulsar «Mod Manager Download» en la web.'))
             return
         game = games[0]
         if len(games) > 1:
@@ -356,8 +354,8 @@ class MainWindow(Adw.ApplicationWindow):
         key = (domain, mod_id, file_id)
         if key in self._waiting:
             return
-        task = self.taskbar.add(f"Esperando a la web: pulsa «Slow download» para «{name}»", cancellable=True)
-        task.msg.set_label("el navegador pasará el enlace a Crisol")
+        task = self.taskbar.add(_('Esperando a la web: pulsa «Slow download» para «{0}»').format(name), cancellable=True)
+        task.msg.set_label(_('el navegador pasará el enlace a Crisol'))
         self._waiting[key] = task
 
         def check():
@@ -365,7 +363,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self._waiting.pop(key, None)
                 task.done()
                 if self._queue and self._queue_key() == key:
-                    self.toast(f"Instalación de la colección «{self._queue['name']}» detenida")
+                    self.toast(_('Instalación de la colección «{0}» detenida').format(self._queue['name']))
                     self._queue = None
                 return False
             return key in self._waiting
@@ -376,7 +374,7 @@ class MainWindow(Adw.ApplicationWindow):
         if waiting:
             waiting.done()
         ctx = manager.context(game)
-        task = self.taskbar.add(f"Descargando mod {link.mod_id} para {game.name}", cancellable=True)
+        task = self.taskbar.add(_('Descargando mod {0} para {1}').format(link.mod_id, game.name), cancellable=True)
 
         def work():
             with manager.game_lock(game):
@@ -391,7 +389,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not self.ctl.cfg.keep_archives:
                 manager.delete_archive(ctx, rec.uid)
             if not in_queue:
-                self.toast(f"«{rec.name}» instalado. Pulsa «Aplicar» para llevarlo al juego.", 6)
+                self.toast(_('«{0}» instalado. Pulsa «Aplicar» para llevarlo al juego.').format(rec.name), 6)
             page = self.current_game_page(game)
             if page:
                 page.refresh_installed()
@@ -402,25 +400,25 @@ class MainWindow(Adw.ApplicationWindow):
         def fail(e):
             task.done()
             if in_queue:
-                self.error(f"Colección «{self._queue['name']}» detenida", e)
+                self.error(_('Colección «{0}» detenida').format(self._queue['name']), e)
                 self._queue = None
                 return
             if isinstance(e, manager.InstallCancelled):
-                self.toast("Instalación cancelada")
+                self.toast(_('Instalación cancelada'))
             elif task.cancel.is_set():
-                self.toast("Descarga cancelada. Vuelve a pulsar «Slow download» y continuará donde se quedó.", 6)
+                self.toast(_('Descarga cancelada. Vuelve a pulsar «Slow download» y continuará donde se quedó.'), 6)
             else:
-                self.error("No se pudo instalar el mod", e)
+                self.error(_('No se pudo instalar el mod'), e)
         run_async(work, done, fail)
 
     # ---------- colecciones: instalar varios mods en orden ----------
     def install_collection(self, game: Game, domain: str, name: str, items: list) -> None:
         """items: CollectionMod en el orden de la colección (los que se quieren instalar)."""
         if self._queue:
-            self.error("Ya hay una colección instalándose", f"Espera a que termine «{self._queue['name']}».")
+            self.error(_('Ya hay una colección instalándose'), _('Espera a que termine «{0}».').format(self._queue['name']))
             return
         if not self.ctl.nexus.api_key:
-            self.error("Falta la API key de Nexus Mods", "Ponla en Preferencias → Nexus Mods.")
+            self.error(_('Falta la API key de Nexus Mods'), _('Ponla en Preferencias → Nexus Mods.'))
             return
         self._queue = {"game": game, "domain": domain, "name": name, "items": items, "index": 0}
         self._queue_next(advance=False)
@@ -438,7 +436,7 @@ class MainWindow(Adw.ApplicationWindow):
         if advance:
             q["index"] += 1
         if q["index"] >= len(q["items"]):
-            self.toast(f"«{q['name']}»: {len(q['items'])} mods instalados. Pulsa «Aplicar» para llevarlos al juego.", 8)
+            self.toast(_('«{0}»: {1} mods instalados. Pulsa «Aplicar» para llevarlos al juego.').format(q['name'], len(q['items'])), 8)
             self._queue = None
             return
         it = q["items"][q["index"]]
@@ -458,5 +456,5 @@ class MainWindow(Adw.ApplicationWindow):
         from .. import VERSION
         d = Adw.AboutDialog(application_name=APP_NAME, version=VERSION, developer_name="madky",
                             application_icon="dev.madky.Crisol", license_type=Gtk.License.MIT_X11,
-                            comments="Gestor de mods para juegos de Steam y Umbral, con Nexus Mods como fuente.")
+                            comments=_('Gestor de mods para juegos de Steam y Umbral, con Nexus Mods como fuente.'))
         d.present(self)

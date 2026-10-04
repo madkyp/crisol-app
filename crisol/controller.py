@@ -21,9 +21,9 @@ class Controller:
         self.account_error: str = ""
 
     # ---------- bloqueantes (llamar desde hilos) ----------
-    def scan(self) -> list[Game]:
+    def scan(self, refresh: bool = True) -> list[Game]:
         games = scan_all()
-        have_table = bool(self.nexus.games())  # tabla de juegos de Nexus (caché semanal)
+        have_table = bool(self.nexus.games(refresh))  # tabla de juegos de Nexus (caché semanal)
         for g in games:
             st = manager.context(g).state
             # None = aún sin emparejar; "" = emparejado sin resultado (o desvinculado a mano).

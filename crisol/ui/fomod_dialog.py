@@ -8,11 +8,12 @@ from gi.repository import Adw, GLib, Gtk
 
 from .. import fomod
 from .util import local_texture
+from ..i18n import _
 
-_HINT = {"SelectExactlyOne": "Elige una", "SelectAtMostOne": "Elige una o ninguna",
-         "SelectAtLeastOne": "Elige al menos una", "SelectAll": "Se instalan todas", "SelectAny": "Elige las que quieras"}
-_TYPE = {"Required": "Obligatoria", "Recommended": "Recomendada", "NotUsable": "No disponible",
-         "CouldBeUsable": "Puede funcionar"}
+_HINT = {"SelectExactlyOne": _('Elige una'), "SelectAtMostOne": _('Elige una o ninguna'),
+         "SelectAtLeastOne": _('Elige al menos una'), "SelectAll": _('Se instalan todas'), "SelectAny": _('Elige las que quieras')}
+_TYPE = {"Required": _('Obligatoria'), "Recommended": _('Recomendada'), "NotUsable": _('No disponible'),
+         "CouldBeUsable": _('Puede funcionar')}
 
 
 def make_chooser(win, game_dir: Path):
@@ -33,21 +34,21 @@ def make_chooser(win, game_dir: Path):
 
 class FomodDialog(Adw.Dialog):
     def __init__(self, module: fomod.Module, mod_root: Path, previous, game_dir: Path, on_done):
-        super().__init__(title=f"Instalar {module.name}" if module.name else "Instalador del mod",
+        super().__init__(title=_('Instalar {0}').format(module.name) if module.name else _('Instalador del mod'),
                          content_width=980, content_height=680, can_close=True)
         self.module, self.root, self.game_dir, self.on_done = module, mod_root, game_dir, on_done
         self.choice: fomod.Choice = previous or fomod.default_choice(module, game_dir)
         self._finished = False
-        self.connect("closed", lambda *_: self._finish(None))
+        self.connect("closed", lambda *_u: self._finish(None))
 
         tv = Adw.ToolbarView()
         hb = Adw.HeaderBar(show_end_title_buttons=False)
-        self.back = Gtk.Button(label="Atrás")
-        self.back.connect("clicked", lambda *_: self._go(-1))
-        cancel = Gtk.Button(label="Cancelar")
-        cancel.connect("clicked", lambda *_: self.close())
+        self.back = Gtk.Button(label=_('Atrás'))
+        self.back.connect("clicked", lambda *_u: self._go(-1))
+        cancel = Gtk.Button(label=_('Cancelar'))
+        cancel.connect("clicked", lambda *_u: self.close())
         self.next = Gtk.Button(css_classes=["suggested-action"])
-        self.next.connect("clicked", lambda *_: self._go(+1))
+        self.next.connect("clicked", lambda *_u: self._go(+1))
         hb.pack_start(cancel)
         hb.pack_end(self.next)
         hb.pack_end(self.back)
@@ -77,8 +78,8 @@ class FomodDialog(Adw.Dialog):
         self.visible = fomod.visible_steps(module, self.choice, game_dir)
         self.pos = 0
         if not self.visible:  # sin pasos: solo archivos obligatorios
-            self.step_title.set_label("Este instalador no tiene opciones")
-            self.next.set_label("Instalar")
+            self.step_title.set_label(_('Este instalador no tiene opciones'))
+            self.next.set_label(_('Instalar'))
             self.back.set_sensitive(False)
         else:
             self._render()
@@ -95,7 +96,7 @@ class FomodDialog(Adw.Dialog):
             for gi, g in enumerate(self.module.steps[si].groups):
                 err = fomod.validate_group(g, self.choice.get((si, gi), set()))
                 if err:
-                    self.desc_title.set_label("Falta elegir")
+                    self.desc_title.set_label(_('Falta elegir'))
                     self.desc.set_label(err)
                     return
         # Las elecciones de este paso pueden mostrar u ocultar los siguientes.
@@ -123,7 +124,7 @@ class FomodDialog(Adw.Dialog):
         self.step_title.set_label(f"{step.name or 'Opciones'}  ·  paso {self.pos + 1} de {total}")
         self.back.set_sensitive(self.pos > 0)
         last = self.pos == total - 1
-        self.next.set_label("Instalar" if last else "Siguiente")
+        self.next.set_label(_('Instalar') if last else _('Siguiente'))
         child = self.groups_box.get_first_child()
         while child:
             nxt = child.get_next_sibling()
@@ -140,7 +141,7 @@ class FomodDialog(Adw.Dialog):
             self._show_info(picked[0].name, picked[0].description, picked[0].image)
 
     def _group(self, si: int, gi: int, g: fomod.Group, flags) -> Gtk.Widget:
-        grp = Adw.PreferencesGroup(title=GLib.markup_escape_text(g.name or "Opciones"),
+        grp = Adw.PreferencesGroup(title=GLib.markup_escape_text(g.name or _('Opciones')),
                                    description=_HINT.get(g.type, ""))
         key = (si, gi)
         sel = self.choice.setdefault(key, set())

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from ..i18n import _
 
 
 class ProviderError(Exception):
@@ -18,6 +19,10 @@ class RateLimited(ProviderError):
 
 
 class PremiumRequired(ProviderError):
+    pass
+
+
+class NotFound(ProviderError):
     pass
 
 
@@ -86,11 +91,11 @@ class SearchPage:
 
 
 SORTS = {  # clave interna → etiqueta
-    "relevance": "Relevancia",
-    "downloads": "Más descargados",
-    "endorsements": "Mejor valorados",
-    "updatedAt": "Actualizados",
-    "createdAt": "Más recientes",
+    "relevance": _('Relevancia'),
+    "downloads": _('Más descargados'),
+    "endorsements": _('Mejor valorados'),
+    "updatedAt": _('Actualizados'),
+    "createdAt": _('Más recientes'),
 }
 
 

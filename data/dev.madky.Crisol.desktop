@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Crisol
-GenericName=Gestor de mods
-Comment=Gestor de mods para juegos de Steam y Umbral (Nexus Mods)
+GenericName=Mod manager
+GenericName[es]=Gestor de mods
+Comment=Mod manager for Steam and Umbral games (Nexus Mods)
+Comment[es]=Gestor de mods para juegos de Steam y Umbral (Nexus Mods)
 Exec=crisol %u
 Icon=dev.madky.Crisol
 Terminal=false

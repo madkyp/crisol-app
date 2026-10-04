@@ -17,8 +17,9 @@ from dataclasses import asdict, dataclass
 import requests
 
 from .. import APP_NAME, VERSION, jsonio, paths
-from .base import (AuthError, CollectionInfo, CollectionMod, FileInfo, ModInfo, ModProvider, PremiumRequired, ProviderError, RateLimited,
+from .base import (AuthError, CollectionInfo, CollectionMod, FileInfo, ModInfo, NotFound, ModProvider, PremiumRequired, ProviderError, RateLimited,
                    SearchPage)
+from ..i18n import _
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def parse_nxm(url: str) -> NxmLink:
     u = urllib.parse.urlparse(url)
     parts = [p for p in u.path.split("/") if p]
     if u.scheme.lower() != "nxm" or len(parts) != 4 or parts[0] != "mods" or parts[2] != "files":
-        raise ProviderError(f"Enlace nxm no reconocido: {url}")
+        raise ProviderError(_('Enlace nxm no reconocido: {0}').format(url))
     q = urllib.parse.parse_qs(u.query)
     exp = q.get("expires", [None])[0]
     return NxmLink(domain=u.netloc.lower(), mod_id=int(parts[1]), file_id=int(parts[3]),
@@ -84,52 +85,49 @@ class Nexus(ModProvider):
                 log.info("Nexus v2 sin respuesta (intento %d): %s", attempt + 1, e)
                 continue
             except requests.RequestException as e:
-                raise ProviderError(f"No se pudo conectar con Nexus Mods: {e}") from e
+                raise ProviderError(_('No se pudo conectar con Nexus Mods: {0}').format(e)) from e
             if r.status_code == 429:
-                raise RateLimited("Nexus Mods ha limitado las peticiones. Espera unos minutos.")
+                raise RateLimited(_('Nexus Mods ha limitado las peticiones. Espera unos minutos.'))
             if r.status_code >= 500:
-                last = ProviderError(f"Nexus Mods no responde (error {r.status_code}). Prueba más tarde.")
+                last = ProviderError(_('Nexus Mods no responde (error {0}). Prueba más tarde.').format(r.status_code))
                 time.sleep(1 + attempt)
                 continue
             try:
                 body = r.json()
             except ValueError as e:
-                raise ProviderError(f"Respuesta no válida de Nexus Mods (HTTP {r.status_code})") from e
+                raise ProviderError(_('Respuesta no válida de Nexus Mods (HTTP {0})').format(r.status_code)) from e
             if body.get("errors"):
-                raise ProviderError("Nexus Mods: " + "; ".join(e.get("message", "?") for e in body["errors"]))
+                raise ProviderError(_('Nexus Mods: ') + "; ".join(e.get("message", "?") for e in body["errors"]))
             return body.get("data") or {}
         if isinstance(last, ProviderError):
             raise last
-        raise ProviderError("Nexus Mods no responde ahora mismo (se ha intentado 3 veces). Prueba en un rato.")
+        raise ProviderError(_('Nexus Mods no responde ahora mismo (se ha intentado 3 veces). Prueba en un rato.'))
 
     def _v1(self, path: str, key_required: bool = True) -> object:
         if key_required and not self.api_key:
-            raise AuthError("Falta la API key de Nexus Mods (Preferencias → Nexus Mods).")
+            raise AuthError(_('Falta la API key de Nexus Mods (Preferencias → Nexus Mods).'))
         headers = {"APIKEY": self.api_key} if self.api_key else {}
         try:
             r = self.session.get(V1 + path, headers=headers, timeout=20)
         except requests.RequestException as e:
-            raise ProviderError(f"No se pudo conectar con Nexus Mods: {e}") from e
+            raise ProviderError(_('No se pudo conectar con Nexus Mods: {0}').format(e)) from e
         with self._lock:
             self.rate = {k.lower(): v for k, v in r.headers.items() if k.lower().startswith("x-rl-")}
         if r.status_code == 401:
-            raise AuthError("La API key de Nexus Mods no es válida o ha caducado.")
+            raise AuthError(_('La API key de Nexus Mods no es válida o ha caducado.'))
         if r.status_code == 429:
-            raise RateLimited("Has llegado al límite de peticiones de Nexus Mods "
-                              f"(quedan {self.rate.get('x-rl-hourly-remaining', '0')} esta hora). "
-                              "Espera a que se renueve.")
+            raise RateLimited(_('Has llegado al límite de peticiones de Nexus Mods (quedan {0} esta hora). Espera a que se renueve.').format(self.rate.get('x-rl-hourly-remaining', '0')))
         if r.status_code == 403:
             msg = _message(r)
             if "premium" in msg.lower():
-                raise PremiumRequired("Esta descarga necesita Nexus Premium o un enlace «Mod Manager Download» "
-                                      "de la web.")
-            raise ProviderError(f"Nexus Mods ha denegado la petición: {msg}")
+                raise PremiumRequired(_('Esta descarga necesita Nexus Premium o un enlace «Mod Manager Download» de la web.'))
+            raise ProviderError(_('Nexus Mods ha denegado la petición: {0}').format(msg))
         if r.status_code == 404:
-            raise ProviderError(f"No encontrado en Nexus Mods: {_message(r)}")
+            raise NotFound(_('No encontrado en Nexus Mods: {0}').format(_message(r)))
         if r.status_code == 410:
-            raise ProviderError("El enlace de descarga ha caducado. Vuelve a pulsar «Mod Manager Download».")
+            raise ProviderError(_('El enlace de descarga ha caducado. Vuelve a pulsar «Mod Manager Download».'))
         if r.status_code >= 400:
-            raise ProviderError(f"Nexus Mods devolvió error {r.status_code}: {_message(r)}")
+            raise ProviderError(_('Nexus Mods devolvió error {0}: {1}').format(r.status_code, _message(r)))
         return r.json()
 
     # ---------- cuenta ----------
@@ -138,11 +136,12 @@ class Nexus(ModProvider):
         return self._v1("/users/validate.json")  # type: ignore[return-value]
 
     # ---------- juegos ----------
-    def games(self) -> list[dict]:
-        """Tabla pública de juegos de Nexus (data.nexusmods.com), en caché una semana."""
+    def games(self, refresh: bool = True) -> list[dict]:
+        """Tabla pública de juegos de Nexus (data.nexusmods.com), en caché una semana.
+        refresh=False: solo la caché (para órdenes rápidas que no deben esperar a la red)."""
         cache = paths.CACHE_DIR / "nexus-games.json"
         try:
-            fresh = time.time() - cache.stat().st_mtime < 7 * 86400
+            fresh = time.time() - cache.stat().st_mtime < 7 * 86400 or not refresh
         except OSError:
             fresh = False
         if not fresh:
@@ -182,7 +181,7 @@ class Nexus(ModProvider):
             data = self._gql("query($d:String){game(domainName:$d){id}}", {"d": domain})
             g = data.get("game")
             if not g:
-                raise ProviderError(f"Nexus Mods no conoce el juego «{domain}»")
+                raise ProviderError(_('Nexus Mods no conoce el juego «{0}»').format(domain))
             self._game_ids[domain] = int(g["id"])
         return self._game_ids[domain]
 
@@ -275,7 +274,7 @@ class Nexus(ModProvider):
         }}}}""", {"m": mod_id, "g": self.game_id(game_domain)})
         n = data.get("mod")
         if not n:
-            raise ProviderError(f"El mod {mod_id} no existe o no está disponible")
+            raise ProviderError(_('El mod {0} no existe o no está disponible').format(mod_id))
         info = self._mod(n)
         reqs = (((n.get("modRequirements") or {}).get("nexusRequirements") or {}).get("nodes")) or []
         info.requirements = [{"mod_id": int(r["modId"]) if r.get("modId") else None, "name": r.get("modName") or "",
@@ -317,10 +316,8 @@ class Nexus(ModProvider):
     def md5_search(self, game_domain: str, md5: str) -> list[dict]:
         try:
             res = self._v1(f"/games/{game_domain}/mods/md5_search/{md5}.json")
-        except ProviderError as e:
-            if "No encontrado" in str(e):
-                return []
-            raise
+        except NotFound:
+            return []
         return res if isinstance(res, list) else []
 
     @staticmethod

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import jsonio, paths
 from .games import Game
+from .i18n import _
 
 SAVE_EXTS = (".sav", ".sl2", ".save", ".cnv", ".ess", ".sv", ".savegame")
 SAVE_DIRS = {"saved", "saves", "savegames", "save", "savedata", "savegame"}
@@ -126,8 +127,8 @@ def restore(game: Game, backup_id: str) -> int:
     src = _dir(game) / backup_id
     meta = jsonio.load(src / "backup.json", None)
     if not meta:
-        raise FileNotFoundError("Esa copia ya no existe")
-    backup(game, "antes de restaurar otra copia", protect=backup_id)
+        raise FileNotFoundError(_('Esa copia ya no existe'))
+    backup(game, _('antes de restaurar otra copia'), protect=backup_id)
     roots = _roots(game)
     count = 0
     for d in meta["dirs"]:

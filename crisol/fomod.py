@@ -13,6 +13,7 @@ import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
+from .i18n import _
 
 
 class FomodError(Exception):
@@ -97,7 +98,7 @@ def _read_xml(path: Path) -> ET.Element:
     try:
         return ET.fromstring(text)
     except ET.ParseError as e:
-        raise FomodError(f"El instalador FOMOD del mod está mal formado: {e}") from e
+        raise FomodError(_('El instalador FOMOD del mod está mal formado: {0}').format(e)) from e
 
 
 def _tag(el: ET.Element) -> str:
@@ -153,7 +154,7 @@ def _cond(el: ET.Element | None) -> tuple | None:
 def parse(config: Path) -> Module:
     root = _read_xml(config)
     if _tag(root) != "config":
-        raise FomodError("El instalador FOMOD del mod no tiene el formato esperado")
+        raise FomodError(_('El instalador FOMOD del mod no tiene el formato esperado'))
     steps = []
     for st in _kids(_kid(root, "installSteps"), "installStep"):
         vis = _kid(st, "visible")
@@ -281,11 +282,11 @@ def default_choice(module: Module, game_dir: Path | None = None) -> Choice:
 def validate_group(group: Group, selected: set[int]) -> str | None:
     n = len(selected)
     if group.type == "SelectExactlyOne" and n != 1:
-        return f"En «{group.name}» hay que elegir exactamente una opción."
+        return _('En «{0}» hay que elegir exactamente una opción.').format(group.name)
     if group.type == "SelectAtMostOne" and n > 1:
-        return f"En «{group.name}» se puede elegir como mucho una opción."
+        return _('En «{0}» se puede elegir como mucho una opción.').format(group.name)
     if group.type == "SelectAtLeastOne" and n < 1:
-        return f"En «{group.name}» hay que elegir al menos una opción."
+        return _('En «{0}» hay que elegir al menos una opción.').format(group.name)
     return None
 
 
@@ -323,10 +324,10 @@ def build(module: Module, choice: Choice, mod_root: Path, out: Path, game_dir: P
     ops = sorted(enumerate(operations(module, choice, game_dir)), key=lambda x: (x[1].priority, x[0]))
     out.mkdir(parents=True, exist_ok=True)
     count = 0
-    for _, op in ops:
+    for _u, op in ops:
         src = _ci_source(mod_root, op.source)
         if src is None:
-            raise FomodError(f"El instalador FOMOD pide un archivo que no está en el mod: {op.source}")
+            raise FomodError(_('El instalador FOMOD pide un archivo que no está en el mod: {0}').format(op.source))
         if op.folder or src.is_dir():
             for dirpath, _dirs, files in os.walk(src):
                 rel_dir = Path(dirpath).relative_to(src)
@@ -344,7 +345,7 @@ def build(module: Module, choice: Choice, mod_root: Path, out: Path, game_dir: P
             shutil.copy2(src, dst)
             count += 1
     if not count:
-        raise FomodError("Con las opciones elegidas el instalador no instala ningún archivo.")
+        raise FomodError(_('Con las opciones elegidas el instalador no instala ningún archivo.'))
     return count
 
 

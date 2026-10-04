@@ -5,6 +5,7 @@ import hashlib
 import shutil
 import subprocess
 from pathlib import Path
+from .i18n import _
 
 
 class ArchiveError(Exception):
@@ -45,7 +46,7 @@ def extract(archive: Path, dest: Path) -> None:
                        capture_output=True, text=True)
     if r.returncode != 0:
         shutil.rmtree(dest, ignore_errors=True)
-        raise ArchiveError(f"No se pudo extraer {archive.name}: {r.stderr.strip() or 'archivo dañado'}")
+        raise ArchiveError(_('No se pudo extraer {0}: {1}').format(archive.name, r.stderr.strip() or _('archivo dañado')))
     # Permisos razonables (algunos zip traen carpetas sin permiso de lectura); se conserva el de ejecución.
     for p in dest.rglob("*"):
         try:

@@ -18,6 +18,7 @@ import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from .i18n import _
 
 # Archivos que no se despliegan nunca (instaladores FOMOD, basura de macOS…).
 _JUNK_DIRS = {"fomod", "__macosx"}
@@ -162,7 +163,7 @@ class Layout:
     def map_files(self, staged: Path, mod_name: str) -> Mapping:
         files = staged_files(staged)
         if not files:
-            raise LayoutError("El archivo del mod está vacío")
+            raise LayoutError(_('El archivo del mod está vacío'))
         found = _anchor(staged, files, self.game_dir, self.anchors)
         if found:
             src_dir, game_rel = found
@@ -176,7 +177,7 @@ class Layout:
                 continue
             mapped.append((f, _join(game_rel, rel)))
         if not mapped:
-            raise LayoutError("No se ha encontrado nada que instalar en el archivo del mod")
+            raise LayoutError(_('No se ha encontrado nada que instalar en el archivo del mod'))
         return Mapping(mapped, skipped)
 
     def default_dir(self) -> str:
@@ -199,9 +200,7 @@ class Layout:
         proxies = sorted(names & _PROXY_DLLS)
         if proxies:
             ov = ",".join(f"{Path(p).stem}=n,b" for p in proxies)
-            return [f"Hay un cargador de mods ({', '.join(proxies)}). En Proton debe cargarse la DLL nativa: "
-                    f"en Steam → Propiedades → Opciones de lanzamiento pon "
-                    f"WINEDLLOVERRIDES=\"{ov}\" %command%"]
+            return [_('Hay un cargador de mods ({0}). En Proton debe cargarse la DLL nativa: en Steam → Propiedades → Opciones de lanzamiento pon WINEDLLOVERRIDES="{1}" %command%').format(', '.join(proxies), ov)]
         return []
 
     def loader(self, mods: list, staging) -> Loader | None:
@@ -209,13 +208,13 @@ class Layout:
         return None
 
     # Orden: qué gana en un conflicto de archivos (texto para la interfaz).
-    order_hint = "Si dos mods traen el mismo archivo, gana el que está más abajo en la lista."
+    order_hint = _('Si dos mods traen el mismo archivo, gana el que está más abajo en la lista.')
 
 
 class LooseLayout(Layout):
     id = "loose"
-    label = "Archivos sueltos"
-    description = "Los archivos del mod se colocan sobre la carpeta del juego (Unity, BepInEx, genéricos)."
+    label = _('Archivos sueltos')
+    description = _('Los archivos del mod se colocan sobre la carpeta del juego (Unity, BepInEx, genéricos).')
 
     @classmethod
     def detect(cls, game_dir, nexus_domain):
@@ -224,7 +223,7 @@ class LooseLayout(Layout):
     def loader(self, mods, staging):
         # Mods que van dentro de BepInEx/plugins o Mods/ (MelonLoader) necesitan su cargador; el
         # cargador puede venir del juego o de otro mod instalado.
-        dsts = [d.lower() for m in mods for _, d in m.files]
+        dsts = [d.lower() for m in mods for _u, d in m.files]
         game = _children(self.game_dir)
         engine = unity_engine(self.game_dir) or ""
         il2cpp = "IL2CPP" in engine
@@ -233,29 +232,26 @@ class LooseLayout(Layout):
         have_melon = "melonloader" in game or any(d.startswith("melonloader/") for d in dsts)
         bep = ("BepInEx" + (" 6 (IL2CPP)" if il2cpp else ""), "https://github.com/BepInEx/BepInEx/releases")
         if any(d.startswith("bepinex/plugins/") for d in dsts):
-            return Loader(bep[0], "required", have_bep, "Algún mod activo es un plugin de BepInEx." + ("" if have_bep
-                          else " Instálalo como un mod más y ponlo el primero."), bep[1], engine, ("BepInEx",))
+            return Loader(bep[0], "required", have_bep, _('Algún mod activo es un plugin de BepInEx.') + ("" if have_bep
+                          else _(' Instálalo como un mod más y ponlo el primero.')), bep[1], engine, ("BepInEx",))
         if any(d.startswith("mods/") and d.endswith(".dll") for d in dsts):
-            return Loader("MelonLoader", "required", have_melon, "Algún mod activo es de MelonLoader." + (
-                          "" if have_melon else " Instálalo como un mod más y ponlo el primero."),
+            return Loader("MelonLoader", "required", have_melon, _('Algún mod activo es de MelonLoader.') + (
+                          "" if have_melon else _(' Instálalo como un mod más y ponlo el primero.')),
                           "https://github.com/LavaGang/MelonLoader/releases", engine, ("MelonLoader",))
         if engine:
-            name = "BepInEx" if have_bep else "MelonLoader" if have_melon else "BepInEx o MelonLoader"
+            name = "BepInEx" if have_bep else "MelonLoader" if have_melon else _('BepInEx o MelonLoader')
             return Loader(name, "optional", have_bep or have_melon,
-                          f"Juego {engine}. Los mods de archivos (texturas, ajustes) no necesitan cargador; los "
-                          "plugins (.dll) necesitan BepInEx o MelonLoader según el mod: míralo en sus requisitos.",
+                          _('Juego {0}. Los mods de archivos (texturas, ajustes) no necesitan cargador; los plugins (.dll) necesitan BepInEx o MelonLoader según el mod: míralo en sus requisitos.').format(engine),
                           bep[1], engine, ("BepInEx", "MelonLoader"))
-        return Loader("Ninguno conocido", "none", False,
-                      "No se ha detectado un motor con cargador habitual: los mods se copian tal cual. Si un mod "
-                      "pide un cargador, aparecerá en sus requisitos.", "", "", ("Mod Loader", "Script Extender"))
+        return Loader(_('Ninguno conocido'), "none", False,
+                      _('No se ha detectado un motor con cargador habitual: los mods se copian tal cual. Si un mod pide un cargador, aparecerá en sus requisitos.'), "", "", ("Mod Loader", "Script Extender"))
 
 
 class UnrealLayout(Layout):
     id = "unreal"
-    label = "Unreal Engine (.pak)"
-    description = "Los .pak van a Content/Paks/~mods con prefijo según el orden; el resto, sobre el juego."
-    order_hint = ("Los .pak se renombran 001_, 002_… según la lista; por convención en Unreal gana el que se "
-                  "carga último (el de más abajo).")
+    label = _('Unreal Engine (.pak)')
+    description = _('Los .pak van a Content/Paks/~mods con prefijo según el orden; el resto, sobre el juego.')
+    order_hint = (_('Los .pak se renombran 001_, 002_… según la lista; por convención en Unreal gana el que se carga último (el de más abajo).'))
 
     def __init__(self, game_dir):
         super().__init__(game_dir)
@@ -300,11 +296,11 @@ class UnrealLayout(Layout):
                     raise
                 skipped += rest
         if not mapped:
-            raise LayoutError("No se ha encontrado ningún .pak ni archivos reconocibles en el mod")
+            raise LayoutError(_('No se ha encontrado ningún .pak ni archivos reconocibles en el mod'))
         return Mapping(mapped, skipped)
 
     def loader(self, mods, staging):
-        dsts = [d.lower() for m in mods for _, d in m.files]
+        dsts = [d.lower() for m in mods for _u, d in m.files]
         needs = any("/logicmods/" in f"/{d}" or "/ue4ss/mods/" in f"/{d}" or d.endswith("/scripts/main.lua")
                     for d in dsts)
         win64 = self.game_dir / self.project / "Binaries" / "Win64"
@@ -312,11 +308,10 @@ class UnrealLayout(Layout):
         ok = bool({"ue4ss.dll", "ue4ss"} & have) or any(d.endswith(("/ue4ss.dll", "/dwmapi.dll")) for d in dsts)
         url = "https://github.com/UE4SS-RE/RE-UE4SS/releases"
         if needs:
-            return Loader("UE4SS", "required", ok, "Algún mod activo usa scripts o LogicMods de UE4SS." + ("" if ok
-                          else " Instálalo como un mod más (suele estar en la página del juego en Nexus)."),
+            return Loader("UE4SS", "required", ok, _('Algún mod activo usa scripts o LogicMods de UE4SS.') + ("" if ok
+                          else _(' Instálalo como un mod más (suele estar en la página del juego en Nexus).')),
                           url, "Unreal Engine", ("UE4SS",))
-        return Loader("UE4SS", "optional", ok, "Unreal Engine: los mods .pak no necesitan cargador; los de scripts "
-                      "(Lua) o LogicMods necesitan UE4SS.", url, "Unreal Engine", ("UE4SS",))
+        return Loader("UE4SS", "optional", ok, _('Unreal Engine: los mods .pak no necesitan cargador; los de scripts (Lua) o LogicMods necesitan UE4SS.'), url, "Unreal Engine", ("UE4SS",))
 
     def target(self, dst, position):
         p = PurePosixPath(dst)
@@ -328,9 +323,8 @@ class UnrealLayout(Layout):
 class KCD2Layout(Layout):
     id = "kcd2"
     label = "Kingdom Come: Deliverance II"
-    description = "Cada mod es una carpeta en mods/; el orden se escribe en mods/mod_order.txt."
-    order_hint = ("El juego carga los mods en el orden de la lista (mods/mod_order.txt). Los mods "
-                  "desactivados no se cargan.")
+    description = _('Cada mod es una carpeta en mods/; el orden se escribe en mods/mod_order.txt.')
+    order_hint = (_('El juego carga los mods en el orden de la lista (mods/mod_order.txt). Los mods desactivados no se cargan.'))
     supports_internal_conflicts = True
     MODS = "mods"
 
@@ -341,7 +335,7 @@ class KCD2Layout(Layout):
     def map_files(self, staged, mod_name):
         files = staged_files(staged)
         if not files:
-            raise LayoutError("El archivo del mod está vacío")
+            raise LayoutError(_('El archivo del mod está vacío'))
         manifests = [f for f in files if PurePosixPath(f).name.lower() == "mod.manifest"]
         roots = sorted({str(PurePosixPath(m).parent) for m in manifests})
         roots = ["" if r == "." else r for r in roots]
@@ -352,8 +346,7 @@ class KCD2Layout(Layout):
                      and PurePosixPath(f).parent.name.lower() == "data"}
             roots = sorted("" if r == "." else r for r in datas)
         if not roots:
-            raise LayoutError("No parece un mod de KCD2: no tiene mod.manifest ni carpeta Data con .pak. "
-                              "Puedes instalarlo como «Archivos sueltos».")
+            raise LayoutError(_('No parece un mod de KCD2: no tiene mod.manifest ni carpeta Data con .pak. Puedes instalarlo como «Archivos sueltos».'))
         mapped, used = [], set()
         folders = []
         for r in roots:
@@ -390,7 +383,7 @@ class KCD2Layout(Layout):
         return {_join(self.MODS, "mod_order.txt"): ("\n".join(lines + body) + "\n").encode()}
 
     def loader(self, mods, staging):
-        return Loader("Ninguno", "none", True, "KCD2 carga los mods de la carpeta mods/ por sí mismo.",
+        return Loader(_('Ninguno'), "none", True, _('KCD2 carga los mods de la carpeta mods/ por sí mismo.'),
                       engine="CryEngine")
 
     def internal_entries(self, path):
@@ -413,11 +406,9 @@ _ME3_GAMES = {"eldenring.exe": "eldenring", "nightreign.exe": "nightreign", "dar
 
 class ME3Layout(Layout):
     id = "me3"
-    label = "FromSoftware (ME3)"
-    description = ("Los mods no se copian al juego: Crisol escribe un perfil de Mod Engine 3 con los mods "
-                   "activos en orden y el juego se lanza con ME3 (Elden Ring, Nightreign, DS3, Sekiro, AC6).")
-    order_hint = ("Los mods se escriben en el perfil de ME3 en el orden de la lista. El juego no se modifica: "
-                  "«Aplicar» solo guarda el perfil.")
+    label = _('FromSoftware (ME3)')
+    description = (_('Los mods no se copian al juego: Crisol escribe un perfil de Mod Engine 3 con los mods activos en orden y el juego se lanza con ME3 (Elden Ring, Nightreign, DS3, Sekiro, AC6).'))
+    order_hint = (_('Los mods se escriben en el perfil de ME3 en el orden de la lista. El juego no se modifica: «Aplicar» solo guarda el perfil.'))
     external = True
     preferred_profile = ""  # variante .me3 elegida para el mod que se está colocando
 
@@ -441,7 +432,7 @@ class ME3Layout(Layout):
     def map_files(self, staged, mod_name):
         files = staged_files(staged)
         if not files:
-            raise LayoutError("El archivo del mod está vacío")
+            raise LayoutError(_('El archivo del mod está vacío'))
         packages, natives, savefile, variants, variant = self._from_profile(staged, files, self.preferred_profile)
         if not packages and not natives:
             dirs = sorted({str(PurePosixPath(f).parent) for f in files} | {str(a) for f in files
@@ -458,8 +449,7 @@ class ME3Layout(Layout):
                        # DLL de proxy (p. ej. _winhttp.dll de otros cargadores): no son mods de ME3
                        and PurePosixPath(f).name.lower().lstrip("_") not in _PROXY_DLLS]
         if not packages and not natives:
-            raise LayoutError("No parece un mod para Mod Engine 3: no trae perfil .me3, ni carpetas de recursos "
-                              "(param, map, chr…), ni DLL.")
+            raise LayoutError(_('No parece un mod para Mod Engine 3: no trae perfil .me3, ni carpetas de recursos (param, map, chr…), ni DLL.'))
         mapped = []
         for f in files:
             for p in packages:
@@ -493,9 +483,9 @@ class ME3Layout(Layout):
                     return None, False
             pk = [rel(x.get("path", "")) for x in data.get("package", [])]
             nt = [rel(x.get("path", "")) for x in data.get("natives", [])]
-            if not pk and not nt or not all(ok for _, ok in pk + nt):
+            if not pk and not nt or not all(ok for _u, ok in pk + nt):
                 continue  # el perfil apunta a archivos que no están (p. ej. Seamless Co-op sin instalar)
-            usable[PurePosixPath(f).stem] = (["" if r == "." else r for r, _ in pk], [r for r, _ in nt],
+            usable[PurePosixPath(f).stem] = (["" if r == "." else r for r, _u in pk], [r for r, _u in nt],
                                               str(data.get("savefile") or ""))
         if not usable:
             return [], [], "", [], ""
@@ -535,8 +525,7 @@ class ME3Layout(Layout):
     def loader(self, mods, staging):
         me3 = self.find_me3([staging(m.uid) for m in mods])
         return Loader("Mod Engine 3 (ME3)", "required", me3 is not None,
-                      f"Se usa {me3}" if me3 else "Hace falta ME3 para cargar los mods. Algunos mods lo traen (The "
-                      "Convergence); si no, descárgalo de su página de versiones en GitHub (incluye la de Linux).",
+                      _('Se usa {0}').format(me3) if me3 else _('Hace falta ME3 para cargar los mods. Algunos mods lo traen (The Convergence); si no, descárgalo de su página de versiones en GitHub (incluye la de Linux).'),
                       "https://github.com/garyttierney/me3/releases", "FromSoftware", ("Mod Engine 3", "ME3"))
 
 
