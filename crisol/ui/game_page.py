@@ -104,7 +104,7 @@ class GamePage(Adw.NavigationPage):
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2)
             hero.add_css_class(cls)
         row = Gtk.Box(spacing=26, hexpand=True)
-        icon_tex = local_texture(g.cover, 150, 225) or local_texture(g.icon, 150, 225)
+        icon_tex = local_texture(g.cover, 150, 225, smart=True) or local_texture(g.icon, 150, 225, smart=True)
         icon_box = Gtk.Box(width_request=150, height_request=225, css_classes=["hero-cover"],
                            overflow=Gtk.Overflow.HIDDEN, valign=Gtk.Align.START, halign=Gtk.Align.START,
                            hexpand=False)

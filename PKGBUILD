@@ -1,6 +1,6 @@
 # Maintainer: madky
 pkgname=crisol
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="Mod manager for Steam and Umbral games on Arch/Hyprland, with Nexus Mods (GTK4/libadwaita)"
 arch=('any')

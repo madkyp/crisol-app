@@ -90,42 +90,41 @@ class GameCard(Gtk.Box):
     WIDTH, HEIGHT = 190, 285
 
     def __init__(self, ctl: Controller, game: Game):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, css_classes=["game-card"])
+        # Tamaño fijo: la portada se ve entera, sin que GTK la estire y la vuelva a recortar.
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, css_classes=["game-card"], hexpand=False,
+                         halign=Gtk.Align.START, width_request=self.WIDTH)
         self.game = game
-        tex = local_texture(game.cover, self.WIDTH, self.HEIGHT) or local_texture(game.hero, self.WIDTH, self.HEIGHT)
-        cover = Gtk.Overlay()
+        tex = (local_texture(game.cover, self.WIDTH, self.HEIGHT, smart=True)
+               or local_texture(game.hero, self.WIDTH, self.HEIGHT, smart=True))
         frame = Gtk.Box(width_request=self.WIDTH, height_request=self.HEIGHT, css_classes=["cover"],
-                        overflow=Gtk.Overflow.HIDDEN)
+                        overflow=Gtk.Overflow.HIDDEN, hexpand=False)
         if tex:
-            pic = Gtk.Picture(paintable=tex, content_fit=Gtk.ContentFit.COVER, hexpand=True, vexpand=True)
-            frame.append(pic)
+            frame.append(Gtk.Picture(paintable=tex, content_fit=Gtk.ContentFit.FILL, can_shrink=False,
+                                     width_request=self.WIDTH, height_request=self.HEIGHT))
         else:
             ph = placeholder(size=56)
             ph.set_hexpand(True)
             ph.set_vexpand(True)
             frame.append(ph)
-        cover.set_child(frame)
+        self.append(frame)
         st = manager.context(game).state
         n = len(st.mods)
-        if n:
-            badges = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, halign=Gtk.Align.END,
-                             valign=Gtk.Align.START, margin_top=8, margin_end=8)
-            badges.append(Gtk.Label(label=_("{0}/{1} mods").format(len(st.profile.enabled), n), css_classes=["chip", "accent"],
-                                    halign=Gtk.Align.END))
-            upd = sum(1 for m in st.mods.values() if m.update_available)
-            if upd:
-                badges.append(Gtk.Label(label=(_("{0} actualizaciones") if upd > 1 else _("1 actualización")).format(upd),
-                                        css_classes=["chip", "success"], halign=Gtk.Align.END))
-            cover.add_overlay(badges)
-        self.append(cover)
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=12, margin_end=12,
                        margin_top=10, margin_bottom=12)
-        name = Gtk.Label(label=game.name, xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=18,
+        name = Gtk.Label(label=game.name, xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=1, hexpand=True,
                          css_classes=["card-name"], tooltip_text=game.name)
         meta = Gtk.Box(spacing=6)
         meta.append(Gtk.Label(label="Steam" if game.source == "steam" else "Umbral", css_classes=["chip", game.source]))
         if not ctl.compatible(game):
             meta.append(Gtk.Label(label=_('Sin Nexus'), css_classes=["chip"]))
+        if n:  # abajo, no sobre la portada: así no tapa el logo del juego
+            meta.append(Gtk.Label(label=_("{0}/{1} mods").format(len(st.profile.enabled), n),
+                                  css_classes=["chip", "accent"]))
+            upd = sum(1 for m in st.mods.values() if m.update_available)
+            if upd:
+                meta.append(Gtk.Label(label="↑ {0}".format(upd), css_classes=["chip", "success"],
+                                      tooltip_text=(_("{0} actualizaciones") if upd > 1 else _("1 actualización"))
+                                      .format(upd)))
         info.append(name)
         info.append(meta)
         self.append(info)

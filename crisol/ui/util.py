@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 _pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="crisol-img")
 _session = requests.Session()
 _session.headers["User-Agent"] = USER_AGENT
-_textures: dict[tuple[str, int, int], Gdk.Texture] = {}
+_textures: dict[tuple, Gdk.Texture] = {}
 
 
 def run_async(fn: Callable, on_done: Callable | None = None, on_error: Callable[[Exception], None] | None = None,
@@ -43,8 +43,39 @@ def idle(fn: Callable, *args) -> None:
     GLib.idle_add(lambda: (fn(*args), False)[1])
 
 
-def _texture_from_file(path: Path, w: int, h: int) -> Gdk.Texture | None:
-    """Imagen recortada al centro para cubrir exactamente w×h (o escalada a lo ancho si h == 0)."""
+def _cover_crop(pb, w: int, h: int):
+    pw, ph = pb.get_width(), pb.get_height()
+    k = max(w / pw, h / ph)
+    sw, sh = max(w, round(pw * k)), max(h, round(ph * k))
+    pb = pb.scale_simple(sw, sh, GdkPixbuf.InterpType.BILINEAR)
+    return pb.new_subpixbuf((sw - w) // 2, (sh - h) // 2, w, h)
+
+
+def _contain_on_blur(pb, w: int, h: int):
+    """La imagen entera, centrada sobre un fondo desenfocado y oscurecido de sí misma (sin recortar
+    portadas que no tienen la proporción de la tarjeta, p. ej. cuadradas o apaisadas)."""
+    bg = _cover_crop(pb, w, h)
+    tiny = bg.scale_simple(max(1, w // 24), max(1, h // 24), GdkPixbuf.InterpType.BILINEAR)
+    bg = tiny.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR)
+    dark = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, w, h)
+    dark.fill(0x101217FF)
+    bg.composite(dark, 0, 0, w, h, 0, 0, 1, 1, GdkPixbuf.InterpType.BILINEAR, 170)
+    pw, ph = pb.get_width(), pb.get_height()
+    # Apaisadas: más grandes, recortando un 20 % de cada lado (el logo suele ir en el centro).
+    k = min(h / ph, (1.6 * w / pw) if pw > ph else w / pw)
+    fw, fh = max(1, round(pw * k)), max(1, round(ph * k))
+    fg = pb.scale_simple(fw, fh, GdkPixbuf.InterpType.HYPER)
+    if fw > w:
+        fg = fg.new_subpixbuf((fw - w) // 2, 0, w, fh)
+        fw = w
+    x, y = (w - fw) // 2, (h - fh) // 2
+    fg.composite(dark, x, y, fw, fh, x, y, 1, 1, GdkPixbuf.InterpType.NEAREST, 255)
+    return dark
+
+
+def _texture_from_file(path: Path, w: int, h: int, smart: bool = False) -> Gdk.Texture | None:
+    """Imagen a exactamente w×h (o escalada a lo ancho si h == 0). Por defecto se recorta al centro;
+    con smart, si la proporción es muy distinta, se muestra entera sobre un fondo desenfocado."""
     try:
         pb = GdkPixbuf.Pixbuf.new_from_file(str(path))
     except GLib.Error:
@@ -52,19 +83,20 @@ def _texture_from_file(path: Path, w: int, h: int) -> Gdk.Texture | None:
     pw, ph = pb.get_width(), pb.get_height()
     if not h:
         h = max(1, round(ph * w / pw))
-    k = max(w / pw, h / ph)
-    sw, sh = max(w, round(pw * k)), max(h, round(ph * k))
-    pb = pb.scale_simple(sw, sh, GdkPixbuf.InterpType.BILINEAR)
-    pb = pb.new_subpixbuf((sw - w) // 2, (sh - h) // 2, w, h)
-    return Gdk.Texture.new_for_pixbuf(pb)
+    ratio = (pw / ph) / (w / h)
+    if smart and not 0.88 <= ratio <= 1.14:
+        out = _contain_on_blur(pb, w, h)
+    else:
+        out = _cover_crop(pb, w, h)
+    return Gdk.Texture.new_for_pixbuf(out)
 
 
-def local_texture(path: Path | None, w: int, h: int = 0) -> Gdk.Texture | None:
+def local_texture(path: Path | None, w: int, h: int = 0, smart: bool = False) -> Gdk.Texture | None:
     if not path:
         return None
-    key = (str(path), w, h)
+    key = (str(path), w, h, smart)
     if key not in _textures:
-        tex = _texture_from_file(path, w, h)
+        tex = _texture_from_file(path, w, h, smart)
         if tex is None:
             return None
         _textures[key] = tex

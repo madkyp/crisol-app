@@ -151,6 +151,32 @@ def scan_umbral() -> list[Game]:
     return games
 
 
+STEAM_CDN_COVER = "https://shared.steamstatic.com/store_item_assets/steam/apps/{appid}/library_600x900.jpg"
+
+
+def fetch_missing_covers(games: list[Game]) -> None:
+    """Portada vertical oficial de la CDN de Steam para los juegos que no la tienen en la caché de Steam
+    (se baja una vez a ~/.cache/crisol/covers; si Steam no la tiene, se recuerda y no se reintenta)."""
+    import requests
+    d = paths.CACHE_DIR / "covers"
+    for g in games:
+        if g.source != "steam" or g.cover:
+            continue
+        f, miss = d / f"{g.source_id}.jpg", d / f"{g.source_id}.none"
+        if not f.exists() and not miss.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            try:
+                r = requests.get(STEAM_CDN_COVER.format(appid=g.source_id), timeout=15)
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+                    f.write_bytes(r.content)
+                elif r.status_code == 404:
+                    miss.touch()
+            except requests.RequestException as e:
+                log.info("sin portada de Steam para %s: %s", g.name, e)
+        if f.exists():
+            g.cover = f
+
+
 def scan_all() -> list[Game]:
     out = scan_steam() + scan_umbral()
     out.sort(key=lambda g: g.name.lower())

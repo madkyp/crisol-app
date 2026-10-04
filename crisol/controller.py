@@ -5,7 +5,7 @@ import logging
 
 from . import manager, secrets
 from .config import Config
-from .games import Game, scan_all
+from .games import Game, fetch_missing_covers, scan_all
 from .providers.base import ProviderError
 from .providers.nexus import Nexus
 
@@ -23,6 +23,8 @@ class Controller:
     # ---------- bloqueantes (llamar desde hilos) ----------
     def scan(self, refresh: bool = True) -> list[Game]:
         games = scan_all()
+        if refresh:
+            fetch_missing_covers(games)
         have_table = bool(self.nexus.games(refresh))  # tabla de juegos de Nexus (caché semanal)
         for g in games:
             st = manager.context(g).state
