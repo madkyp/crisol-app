@@ -51,7 +51,7 @@ def cli(argv: list[str]) -> int | None:
         if args.list:
             print(json.dumps([{"key": g.key, "name": g.name, "source": g.source, "dir": str(g.install_dir),
                                "nexus": ctl.domain(g), "mods": len(manager.context(g).state.mods),
-                               "deployed": manager.context(g).deployer.is_deployed()} for g in games],
+                               "applied": manager.context(g).is_applied()} for g in games],
                              indent=1, ensure_ascii=False))
             return 0
         game = next((g for g in games if g.key == args.restore), None)

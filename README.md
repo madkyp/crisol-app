@@ -13,8 +13,11 @@ Mod manager for **Steam** and **[Umbral](https://github.com/madkyp/umbral-projec
 | Type | Games | How mods are applied and ordered |
 |---|---|---|
 | Kingdom Come: Deliverance II | KCD2 | One folder per mod in `mods/`; order written to `mods/mod_order.txt` (also a whitelist; hand-installed mods are kept at the end) |
+| FromSoftware (ME3) | Elden Ring, Nightreign, DS3, Sekiro, AC6 | Nothing is copied into the game: Crisol writes a [Mod Engine 3](https://github.com/garyttierney/me3) profile with the enabled mods in order (packages, native DLLs, the mod's own savefile) and launches the game with `me3 launch` (or gives you the Steam launch option). Uses `me3` from `PATH` or the one bundled with a mod (e.g. The Convergence) |
 | Unreal Engine | Lies of P, Khazan, Lords of the Fallen… | `.pak/.ucas/.utoc` go to `<Project>/Content/Paks/~mods` renamed `001_`, `002_`… by order; other files relative to the game root |
 | Loose files | Unity / BepInEx / MelonLoader and the rest | Files on top of the game folder; the lower mod in the list wins a conflict |
+
+Each game page shows whether it needs a **mod loader** (ME3, BepInEx, MelonLoader, UE4SS), whether it is installed and where to get it. Loaders installed as mods count.
 
 The type is detected automatically and can be changed in *⋯ → Game settings* (installed mods are remapped without downloading again).
 

@@ -36,6 +36,9 @@ class Mapping:
     files: list[tuple[str, str]]               # (ruta en staging, ruta en el juego), POSIX relativas
     skipped: list[str] = field(default_factory=list)
     folders: list[str] = field(default_factory=list)  # carpetas de mod en mods/ (kcd2)
+    packages: list[str] = field(default_factory=list)  # ME3
+    natives: list[str] = field(default_factory=list)   # ME3
+    savefile: str = ""
 
 
 def staged_files(staged: Path) -> list[str]:
@@ -104,12 +107,23 @@ def _join(*parts: str) -> str:
     return "/".join(p.strip("/") for p in parts if p and p.strip("/"))
 
 
+@dataclass
+class Loader:
+    """Cargador de mods que necesita el juego (o algún mod instalado)."""
+    name: str
+    needed: bool            # hace falta con los mods activos
+    installed: bool
+    detail: str = ""
+    url: str = ""
+
+
 class Layout:
     id = ""
     label = ""
     description = ""
     anchors: list[str] = [""]
     supports_internal_conflicts = False
+    external = False   # True: los mods no se copian al juego (los carga un lanzador, p. ej. ME3)
 
     def __init__(self, game_dir: Path):
         self.game_dir = game_dir
@@ -163,6 +177,10 @@ class Layout:
                     f"WINEDLLOVERRIDES=\"{ov}\" %command%"]
         return []
 
+    def loader(self, mods: list, staging) -> Loader | None:
+        """Cargador que necesitan los mods activos. None = este tipo de juego no usa ninguno."""
+        return None
+
     # Orden: qué gana en un conflicto de archivos (texto para la interfaz).
     order_hint = "Si dos mods traen el mismo archivo, gana el que está más abajo en la lista."
 
@@ -175,6 +193,26 @@ class LooseLayout(Layout):
     @classmethod
     def detect(cls, game_dir, nexus_domain):
         return True
+
+    def loader(self, mods, staging):
+        # Mods que van dentro de BepInEx/plugins o Mods/ (MelonLoader) necesitan su cargador; el
+        # cargador puede venir del juego o de otro mod instalado.
+        dsts = [d.lower() for m in mods for _, d in m.files]
+        game = _children(self.game_dir)
+        il2cpp = (self.game_dir / "GameAssembly.dll").exists()
+        if any(d.startswith("bepinex/plugins/") for d in dsts):
+            ok = "bepinex" in game and (self.game_dir / "BepInEx" / "core").is_dir() or \
+                any(d.startswith("bepinex/core/") for d in dsts)
+            return Loader("BepInEx" + (" 6 (IL2CPP)" if il2cpp else ""), True, ok,
+                          "Algún mod activo es un plugin de BepInEx." + ("" if ok else
+                          " Instálalo como un mod más (búscalo en Nexus o en su GitHub) y ponlo el primero."),
+                          "https://github.com/BepInEx/BepInEx/releases")
+        if any(d.startswith("mods/") and d.endswith(".dll") for d in dsts):
+            ok = "melonloader" in game or any(d.startswith("melonloader/") for d in dsts)
+            return Loader("MelonLoader", True, ok, "Algún mod activo es de MelonLoader." + ("" if ok else
+                          " Instálalo como un mod más y ponlo el primero."),
+                          "https://github.com/LavaGang/MelonLoader/releases")
+        return None
 
 
 class UnrealLayout(Layout):
@@ -229,6 +267,19 @@ class UnrealLayout(Layout):
         if not mapped:
             raise LayoutError("No se ha encontrado ningún .pak ni archivos reconocibles en el mod")
         return Mapping(mapped, skipped)
+
+    def loader(self, mods, staging):
+        dsts = [d.lower() for m in mods for _, d in m.files]
+        needs = any("/logicmods/" in f"/{d}" or "/ue4ss/mods/" in f"/{d}" or d.endswith("/scripts/main.lua")
+                    for d in dsts)
+        if not needs:
+            return None
+        win64 = self.game_dir / self.project / "Binaries" / "Win64"
+        have = {c for c in _children(win64)}
+        ok = bool({"ue4ss.dll", "ue4ss"} & have) or any(d.endswith(("/ue4ss.dll", "/dwmapi.dll")) for d in dsts)
+        return Loader("UE4SS", True, ok, "Algún mod activo usa scripts o LogicMods de UE4SS." + ("" if ok else
+                      " Instálalo como un mod más (suele llamarse «UE4SS» en la página del juego en Nexus)."),
+                      "https://github.com/UE4SS-RE/RE-UE4SS/releases")
 
     def target(self, dst, position):
         p = PurePosixPath(dst)
@@ -301,6 +352,9 @@ class KCD2Layout(Layout):
         body = ordered_folders + (["# Mods instalados a mano, fuera de Crisol:"] + manual if manual else [])
         return {_join(self.MODS, "mod_order.txt"): ("\n".join(lines + body) + "\n").encode()}
 
+    def loader(self, mods, staging):
+        return Loader("Ninguno", False, True, "KCD2 carga los mods de la carpeta mods/ por sí mismo.")
+
     def internal_entries(self, path):
         if path.suffix.lower() != ".pak":
             return []
@@ -311,16 +365,145 @@ class KCD2Layout(Layout):
             return []
 
 
+# Carpetas de recursos de los juegos de FromSoftware: una carpeta que contiene alguna es un paquete ME3.
+_FS_ASSETS = {"action", "asset", "chr", "cutscene", "event", "font", "map", "material", "menu", "movie", "msg",
+              "obj", "other", "param", "parts", "script", "sd", "sfx", "shader", "sound", "regulation.bin"}
+# Juego de ME3 según el ejecutable que hay en la carpeta del juego.
+_ME3_GAMES = {"eldenring.exe": "eldenring", "nightreign.exe": "nightreign", "darksoulsiii.exe": "darksouls3",
+              "sekiro.exe": "sekiro", "armoredcore6.exe": "armoredcore6"}
+
+
+class ME3Layout(Layout):
+    id = "me3"
+    label = "FromSoftware (ME3)"
+    description = ("Los mods no se copian al juego: Crisol escribe un perfil de Mod Engine 3 con los mods "
+                   "activos en orden y el juego se lanza con ME3 (Elden Ring, Nightreign, DS3, Sekiro, AC6).")
+    order_hint = ("Los mods se escriben en el perfil de ME3 en el orden de la lista. El juego no se modifica: "
+                  "«Aplicar» solo guarda el perfil.")
+    external = True
+
+    def __init__(self, game_dir):
+        super().__init__(game_dir)
+        self.exe_dir, self.me3_game = self.find_game(game_dir)
+
+    @staticmethod
+    def find_game(game_dir: Path) -> tuple[Path | None, str]:
+        for d in (game_dir / "Game", game_dir):
+            names = _children(d)
+            for exe, g in _ME3_GAMES.items():
+                if exe in names:
+                    return d, g
+        return None, ""
+
+    @classmethod
+    def detect(cls, game_dir, nexus_domain):
+        return bool(cls.find_game(game_dir)[1])
+
+    def map_files(self, staged, mod_name):
+        files = staged_files(staged)
+        if not files:
+            raise LayoutError("El archivo del mod está vacío")
+        packages, natives, savefile = self._from_profile(staged, files)
+        if not packages and not natives:
+            dirs = sorted({str(PurePosixPath(f).parent) for f in files} | {str(a) for f in files
+                          for a in PurePosixPath(f).parents}, key=lambda d: d.count("/"))
+            for d in dirs:
+                d = "" if d == "." else d
+                if any(d == p or d.startswith(p + "/") for p in packages):
+                    continue
+                if _children(staged / d if d else staged) & _FS_ASSETS:
+                    packages.append(d)
+            natives = [f for f in files if f.lower().endswith(".dll")
+                       and not any(f.startswith(p + "/") or not p for p in packages)
+                       and "/me3/" not in f"/{f.lower()}"
+                       # DLL de proxy (p. ej. _winhttp.dll de otros cargadores): no son mods de ME3
+                       and PurePosixPath(f).name.lower().lstrip("_") not in _PROXY_DLLS]
+        if not packages and not natives:
+            raise LayoutError("No parece un mod para Mod Engine 3: no trae perfil .me3, ni carpetas de recursos "
+                              "(param, map, chr…), ni DLL.")
+        mapped = []
+        for f in files:
+            for p in packages:
+                rel = _under(f, p)
+                if rel is not None:
+                    mapped.append((f, rel))  # destino = ruta dentro del paquete (para ver conflictos)
+                    break
+        return Mapping(mapped, [], packages=packages, natives=natives, savefile=savefile)
+
+    @staticmethod
+    def _from_profile(staged: Path, files: list[str]) -> tuple[list[str], list[str], str]:
+        """Si el mod trae su propio perfil .me3 (p. ej. The Convergence), se usan sus rutas."""
+        import tomllib
+        profiles = sorted((f for f in files if f.lower().endswith(".me3")), key=lambda f: ("seamless" in f.lower(), f))
+        if not profiles:
+            return [], [], ""
+        prof = staged / profiles[0]
+        try:
+            data = tomllib.loads(prof.read_text())
+        except (OSError, tomllib.TOMLDecodeError):
+            return [], [], ""
+
+        def rel(path: str) -> str | None:
+            p = (prof.parent / path).resolve()
+            try:
+                return p.relative_to(staged.resolve()).as_posix()
+            except ValueError:
+                return None
+        packages = [r for r in (rel(x.get("path", "")) for x in data.get("package", [])) if r is not None]
+        natives = [r for r in (rel(x.get("path", "")) for x in data.get("natives", [])) if r]
+        return ["" if r == "." else r for r in packages], natives, str(data.get("savefile") or "")
+
+    def find_me3(self, staging_dirs: list[Path]) -> Path | None:
+        """me3 del sistema o el que trae algún mod instalado (The Convergence lo incluye)."""
+        import shutil as _sh
+        found = _sh.which("me3")
+        if found:
+            return Path(found)
+        for d in staging_dirs:
+            for cand in d.glob("**/me3/Linux/me3") if d.is_dir() else []:
+                if (cand.parent / "win64").is_dir():
+                    cand.chmod(cand.stat().st_mode | 0o111)
+                    return cand
+        return None
+
+    def profile_text(self, mods: list, staging) -> str:
+        lines = ['profileVersion = "v1"']
+        save = next((m.savefile for m in mods if m.savefile), "")
+        if save:
+            lines.append(f"savefile = {_toml_str(save)}")
+        lines += ["", "[[supports]]", f"game = {_toml_str(self.me3_game)}"]
+        for m in mods:
+            for i, pkg in enumerate(m.packages):
+                path = staging(m.uid) / pkg if pkg else staging(m.uid)
+                lines += ["", f"# {m.name}", "[[package]]", f"id = {_toml_str(f'{m.uid}-{i}')}",
+                          f"path = {_toml_str(str(path))}"]
+        for m in mods:
+            for n in m.natives:
+                lines += ["", f"# {m.name}", "[[natives]]", f"path = {_toml_str(str(staging(m.uid) / n))}"]
+        return "\n".join(lines) + "\n"
+
+    def loader(self, mods, staging):
+        me3 = self.find_me3([staging(m.uid) for m in mods])
+        return Loader("Mod Engine 3 (ME3)", True, me3 is not None,
+                      f"Se usa {me3}" if me3 else "Hace falta ME3 para cargar los mods. Algunos mods lo traen (The "
+                      "Convergence); si no, descárgalo de su página de versiones en GitHub (incluye la de Linux).",
+                      "https://github.com/garyttierney/me3/releases")
+
+
+def _toml_str(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _safe_folder(name: str) -> str:
     s = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_").lower()
     return s or "mod"
 
 
-LAYOUTS: dict[str, type[Layout]] = {c.id: c for c in (KCD2Layout, UnrealLayout, LooseLayout)}
+LAYOUTS: dict[str, type[Layout]] = {c.id: c for c in (KCD2Layout, ME3Layout, UnrealLayout, LooseLayout)}
 
 
 def detect(game_dir: Path, nexus_domain: str | None) -> type[Layout]:
-    for cls in (KCD2Layout, UnrealLayout, LooseLayout):
+    for cls in (KCD2Layout, ME3Layout, UnrealLayout, LooseLayout):
         if cls.detect(game_dir, nexus_domain):
             return cls
     return LooseLayout

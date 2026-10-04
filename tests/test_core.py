@@ -128,6 +128,47 @@ class LooseTest(Base):
         self.assert_restored()
 
 
+class NoExtensionTest(Base):
+    game_files = {"Game.exe": b"exe"}
+
+    def test_zip_without_extension_is_extracted(self):
+        z = make_zip(self.tmp / "dl" / "0b_53_a2_0b53a286", {"Mod/BepInEx/x.dll": b"x", "Mod/y.dll": b"y"})
+        rec = manager.install_archive(self.ctx, z, ModRecord(uid=self.ctx.state.new_uid(), name="M"))
+        self.assertEqual(len(rec.files), 2)
+
+
+class ME3Test(Base):
+    game_files = {"Game/eldenring.exe": b"exe", "Game/regulation.bin": b"r"}
+
+    def test_profile_from_mod_and_plain_package(self):
+        prof = (b'profileVersion = "v1"\nsavefile = "ER0000.cnv"\n[[supports]]\ngame = "eldenring"\n'
+                b'[[package]]\nid = "c"\npath = "./../mod"\n[[natives]]\npath = "./../mod/dll/a.dll"\n')
+        conv = self.add("Convergence", {"ConvergenceER/me3/convergence.me3": prof,
+                                        "ConvergenceER/me3/convergence - seamless.me3": b"x",
+                                        "ConvergenceER/me3/Linux/me3": b"#!/bin/sh\n",
+                                        "ConvergenceER/me3/Linux/win64/me3.exe": b"x",
+                                        "ConvergenceER/mod/regulation.bin": b"c", "ConvergenceER/mod/dll/a.dll": b"d"})
+        other = self.add("Armor", {"Armor/mod/parts/x.dcx": b"p", "Armor/mod/regulation.bin": b"o"})
+        self.assertEqual(self.ctx.layout.id, "me3")
+        self.assertEqual((conv.packages, conv.natives, conv.savefile),
+                         (["ConvergenceER/mod"], ["ConvergenceER/mod/dll/a.dll"], "ER0000.cnv"))
+        self.assertEqual(other.packages, ["Armor/mod"])
+        plan = self.ctx.plan()
+        self.assertEqual([(c.target, c.winner) for c in plan.conflicts], [("regulation.bin", other.uid)])
+        manager.apply(self.ctx)
+        text = self.ctx.me3_profile.read_text()
+        self.assertIn('savefile = "ER0000.cnv"', text)
+        self.assertLess(text.index("ConvergenceER/mod"), text.index("Armor/mod"))
+        cmd = manager.me3_command(self.ctx)
+        self.assertTrue(cmd[0].endswith("me3/Linux/me3") and cmd[1:4] == ["launch", "--game", "eldenring"])
+        self.assertTrue(self.ctx.loader().installed)
+        # El juego no se toca: nada añadido ni cambiado.
+        self.assertEqual(deploy.diff(self.before, deploy.fingerprint(self.game_dir)),
+                         {"added": [], "removed": [], "changed": []})
+        manager.restore(self.ctx)
+        self.assertFalse(self.ctx.me3_profile.exists())
+
+
 class KCD2Test(Base):
     game_files = {"Bin/Win64MasterMasterSteamPGO/KingdomCome.exe": b"exe", "Data/IPL_GameData.pak": b"x"}
 

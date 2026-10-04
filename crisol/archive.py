@@ -14,8 +14,22 @@ class ArchiveError(Exception):
 ARCHIVE_EXTS = (".zip", ".7z", ".rar", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".tar.zst")
 
 
+_MAGIC = [(b"PK\x03\x04", ".zip"), (b"7z\xbc\xaf\x27\x1c", ".7z"), (b"Rar!\x1a\x07", ".rar"),
+          (b"\x1f\x8b", ".tar.gz"), (b"\xfd7zXZ\x00", ".tar.xz"), (b"\x28\xb5\x2f\xfd", ".tar.zst")]
+
+
+def sniff(path: Path) -> str:
+    """Extensión según el contenido (algunos archivos de Nexus llegan con un nombre sin extensión)."""
+    try:
+        with path.open("rb") as f:
+            head = f.read(8)
+    except OSError:
+        return ""
+    return next((ext for magic, ext in _MAGIC if head.startswith(magic)), "")
+
+
 def is_archive(path: Path) -> bool:
-    return path.name.lower().endswith(ARCHIVE_EXTS)
+    return path.name.lower().endswith(ARCHIVE_EXTS) or bool(sniff(path))
 
 
 def extract(archive: Path, dest: Path) -> None:
@@ -32,10 +46,11 @@ def extract(archive: Path, dest: Path) -> None:
     if r.returncode != 0:
         shutil.rmtree(dest, ignore_errors=True)
         raise ArchiveError(f"No se pudo extraer {archive.name}: {r.stderr.strip() or 'archivo dañado'}")
-    # Permisos razonables (algunos zip traen carpetas sin permiso de lectura).
+    # Permisos razonables (algunos zip traen carpetas sin permiso de lectura); se conserva el de ejecución.
     for p in dest.rglob("*"):
         try:
-            p.chmod(0o755 if p.is_dir() else 0o644)
+            mode = p.stat().st_mode
+            p.chmod(0o755 if p.is_dir() else (0o755 if mode & 0o111 else 0o644))
         except OSError:
             pass
 

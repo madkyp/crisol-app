@@ -68,6 +68,12 @@ class ModDialog(Adw.Dialog):
                    "pulsa allí «Slow download» y el navegador pasará el enlace a Crisol, que lo instala solo.")
             if not nxm_handler.is_default():
                 txt += " ⚠ Crisol aún no es la app de los enlaces nxm: actívalo en Preferencias."
+        ld = self.page.ctx.loader()
+        if ld and ld.needed:
+            txt += (f"\n\nEste juego carga los mods con {ld.name}: " +
+                    ("ya lo tienes." if ld.installed else "aún no lo tienes (ver pestaña «Instalados»)."))
+        elif ld and not ld.needed:
+            txt += "\n\nEste juego no necesita cargador de mods."
         self.how.set_label(txt)
 
     def _load(self):

@@ -32,6 +32,9 @@ class ModRecord:
     files: list[list[str]] = field(default_factory=list)   # [[origen en staging, destino en el juego]]
     skipped: list[str] = field(default_factory=list)
     folders: list[str] = field(default_factory=list)       # carpetas en mods/ (kcd2)
+    packages: list[str] = field(default_factory=list)      # ME3: carpetas de paquete (en staging)
+    natives: list[str] = field(default_factory=list)       # ME3: DLL nativas (en staging)
+    savefile: str = ""                                     # ME3: partida aparte que pide el mod
     requirements: list[dict] = field(default_factory=list)
     latest_version: str = ""
     verified: str = ""           # "md5" | "size" | "" (cómo se comprobó la descarga)

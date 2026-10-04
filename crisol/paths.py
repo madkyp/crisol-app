@@ -23,6 +23,7 @@ GAMES_DIR = DATA_DIR / "games"           # estado por juego: mods, perfiles, ord
 BACKUPS_DIR = DATA_DIR / "backups"       # originales del juego que un mod pisa
 DEPLOY_DIR = DATA_DIR / "deploy"         # manifiesto de lo colocado en cada juego
 THUMBS_DIR = CACHE_DIR / "thumbs"
+ME3_DIR = DATA_DIR / "me3"                 # perfiles de Mod Engine 3 generados
 
 STEAM_ROOTS = [
     DATA_HOME / "Steam",

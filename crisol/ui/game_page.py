@@ -63,6 +63,16 @@ class GamePage(Adw.NavigationPage):
         tv.set_content(self.scroll)
         self.set_child(tv)
 
+        # Si el tipo de juego ha cambiado (p. ej. Elden Ring pasa a ME3), se recolocan los mods ya instalados.
+        lay = self.ctx.layout.id
+        if any(m.layout != lay for m in self.ctx.state.mods.values()):
+            failed = manager.remap(self.ctx)
+            if failed:
+                GLib.idle_add(lambda: (self.win.error(
+                    "Mods que no encajan en este juego",
+                    f"Con el tipo «{self.ctx.layout.label}» estos mods no se pueden colocar: "
+                    + ", ".join(failed) + ".\n\nSi alguno se descargó mal, usa ⋮ → «Reinstalar desde la "
+                    "descarga»; si no es para este cargador, desinstálalo."), False)[1])
         self.refresh_installed()
         if self.ctx.state.mods:
             self.stack.set_visible_child_name("installed")
@@ -103,6 +113,8 @@ class GamePage(Adw.NavigationPage):
         chips.append(self.domain_chip)
         self.layout_chip = Gtk.Label(css_classes=["chip"])
         chips.append(self.layout_chip)
+        self.loader_chip = Gtk.Label(css_classes=["chip"])
+        chips.append(self.loader_chip)
         info.append(chips)
         path = Gtk.Label(label=str(g.install_dir).replace(str(Path.home()), "~"), xalign=0,
                          ellipsize=Pango.EllipsizeMode.MIDDLE, css_classes=["hero-sub", "caption"])
@@ -118,6 +130,10 @@ class GamePage(Adw.NavigationPage):
         self.restore_btn.connect("clicked", lambda *_: self.confirm_restore())
         actions.append(self.apply_btn)
         actions.append(self.restore_btn)
+        self.play_btn = Gtk.Button(css_classes=["pill"], visible=False)
+        self.play_btn.set_child(Adw.ButtonContent(icon_name="media-playback-start-symbolic", label="Jugar con mods"))
+        self.play_btn.connect("clicked", lambda *_: self.play())
+        actions.append(self.play_btn)
         info.append(actions)
         row.append(icon_box)
         row.append(info)
@@ -132,7 +148,7 @@ class GamePage(Adw.NavigationPage):
         self.domain_chip.set_css_classes(["chip", "accent" if dom else "warning"])
         lay = self.ctx.layout
         self.layout_chip.set_label(lay.label + ("" if st.layout else " (auto)"))
-        deployed = self.ctx.deployer.is_deployed()
+        deployed = self.ctx.is_applied()
         n_on, n = len(st.profile.enabled), len(st.mods)
         if not n:
             txt = "Aún no hay mods instalados."
@@ -145,6 +161,25 @@ class GamePage(Adw.NavigationPage):
         self.hero_status.set_label(txt)
         self.apply_btn.set_sensitive(bool(n) and (st.dirty_deploy or not deployed))
         self.restore_btn.set_sensitive(deployed)
+        external = lay.external
+        self.restore_btn.set_label("Quitar perfil de ME3" if external else "Restaurar juego sin mods")
+        self.apply_btn.set_label("Guardar perfil de ME3" if external else "Aplicar mods")
+        self.play_btn.set_visible(external)
+        self.play_btn.set_sensitive(deployed and not st.dirty_deploy)
+        ld = self.ctx.loader()
+        if ld is None:
+            self.loader_chip.set_visible(False)
+        else:
+            self.loader_chip.set_visible(True)
+            if not ld.needed:
+                self.loader_chip.set_label("Sin cargador de mods")
+                self.loader_chip.set_css_classes(["chip"])
+            elif ld.installed:
+                self.loader_chip.set_label(f"Cargador: {ld.name} ✓")
+                self.loader_chip.set_css_classes(["chip", "success"])
+            else:
+                self.loader_chip.set_label(f"Falta cargador: {ld.name}")
+                self.loader_chip.set_css_classes(["chip", "error"])
 
     # ================================================================ buscador
     def _build_search(self) -> Gtk.Widget:
@@ -266,6 +301,8 @@ class GamePage(Adw.NavigationPage):
 
         self.order_hint = Gtk.Label(xalign=0, wrap=True, css_classes=["dim-label", "caption"])
         box.append(self.order_hint)
+        self.loader_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(self.loader_box)
         self.notes = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(self.notes)
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["load-order"])
@@ -295,6 +332,7 @@ class GamePage(Adw.NavigationPage):
         self.installed_page.set_title(f"Instalados ({len(st.mods)})" if st.mods else "Instalados")
         self.installed_page.set_needs_attention(st.dirty_deploy and bool(st.mods))
         self._missing = manager.missing_requirements(self.ctx)
+        self._show_loader()
         self._fill_list()
         self._update_hero()
         self._compute_conflicts()
@@ -367,6 +405,49 @@ class GamePage(Adw.NavigationPage):
             b.append(Gtk.Label(label=n, xalign=0, wrap=True, selectable=True, hexpand=True))
             self.notes.append(b)
 
+    def _show_loader(self) -> None:
+        _clear(self.loader_box)
+        ld = self.ctx.loader() if self.ctx.state.mods else None
+        if ld is None or not ld.needed:
+            return
+        b = Gtk.Box(spacing=12, css_classes=["note-box"])
+        b.append(Gtk.Image.new_from_icon_name("emblem-ok-symbolic" if ld.installed else "dialog-warning-symbolic"))
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+        col.append(Gtk.Label(label=f"Cargador de mods: {ld.name} — " + ("instalado" if ld.installed else "no instalado"),
+                             xalign=0, css_classes=["heading"]))
+        col.append(Gtk.Label(label=ld.detail, xalign=0, wrap=True, selectable=True, css_classes=["caption"]))
+        b.append(col)
+        if ld.url and not ld.installed:
+            link = Gtk.Button(label="Conseguirlo", valign=Gtk.Align.CENTER, css_classes=["pill"])
+            link.connect("clicked", lambda *_: Gtk.UriLauncher.new(ld.url).launch(self.win, None, None))
+            b.append(link)
+        self.loader_box.append(b)
+        cmd = manager.me3_command(self.ctx)
+        if cmd:
+            # Para lanzar desde Steam: la orden de ME3 sustituye a la del juego («# %command%» la anula).
+            line = " ".join(f'"{c}"' if " " in c else c for c in cmd) + " # %command%"
+            s = Gtk.Box(spacing=12, css_classes=["note-box"])
+            s.append(Gtk.Image.new_from_icon_name("applications-games-symbolic"))
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+            col.append(Gtk.Label(label="Para jugar desde Steam: Propiedades → Opciones de lanzamiento", xalign=0,
+                                 css_classes=["heading"]))
+            col.append(Gtk.Label(label=line, xalign=0, wrap=True, selectable=True, css_classes=["caption", "monospace"]))
+            s.append(col)
+            copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copiar",
+                              css_classes=["flat"])
+            copy.connect("clicked", lambda *_: (self.get_clipboard().set(line), self.win.toast("Copiado")))
+            s.append(copy)
+            self.loader_box.append(s)
+
+    def play(self) -> None:
+        cmd = manager.me3_command(self.ctx)
+        if not cmd:
+            self.win.error("Falta Mod Engine 3", "No se ha encontrado ME3. Instala un mod que lo traiga o descárgalo.")
+            return
+        log.info("lanzando: %s", cmd)
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.win.toast("Lanzando el juego con ME3… (Steam debe estar abierto)", 6)
+
     def changed(self) -> None:
         """Tras cualquier cambio de orden/estado: guardar y repintar."""
         self.ctx.state.save()
@@ -396,10 +477,27 @@ class GamePage(Adw.NavigationPage):
                 if m.archive and Path(m.archive).is_file():
                     Path(m.archive).unlink(missing_ok=True)
                 self.changed()
-                if self.ctx.deployer.is_deployed():
+                if self.ctx.is_applied():
                     self.win.toast("Pulsa «Aplicar mods» para quitar sus archivos del juego.")
         d.connect("response", resp)
         d.present(self.win)
+
+    def reinstall_mod(self, m: ModRecord) -> None:
+        task = self.win.taskbar.add(f"Reinstalando «{m.name}» desde la descarga")
+
+        def work():
+            with manager.game_lock(self.game):
+                return manager.reinstall(self.ctx, m.uid, task.update)
+
+        def done(rec):
+            task.done()
+            self.win.toast(f"«{rec.name}» reinstalado: {len(rec.files)} archivos")
+            self.changed()
+
+        def fail(e):
+            task.done()
+            self.win.error("No se pudo reinstalar", e)
+        run_async(work, done, fail)
 
     def update_mod(self, m: ModRecord) -> None:
         info = ModInfo(provider="nexus", mod_id=m.mod_id, name=m.name, author=m.author, version=m.latest_version,
@@ -566,6 +664,14 @@ class GamePage(Adw.NavigationPage):
         self.search(reset=True)
 
 
+def _clear(box: Gtk.Box) -> None:
+    child = box.get_first_child()
+    while child:
+        nxt = child.get_next_sibling()
+        box.remove(child)
+        child = nxt
+
+
 def _open(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -671,6 +777,8 @@ class ModRow(Gtk.ListBoxRow):
         menu.append("Bajar", "row.down")
         menu.append("Al principio", "row.top")
         menu.append("Al final", "row.bottom")
+        if m.archive:
+            menu.append("Reinstalar desde la descarga", "row.reinstall")
         if m.mod_id:
             menu.append("Ver en Nexus Mods", "row.page")
         menu.append("Desinstalar", "row.remove")
@@ -687,6 +795,7 @@ class ModRow(Gtk.ListBoxRow):
             "page": lambda: Gtk.UriLauncher.new(f"https://www.nexusmods.com/{m.game_domain}/mods/{m.mod_id}")
             .launch(page.win, None, None),
             "remove": lambda: page.remove_mod(m),
+            "reinstall": lambda: page.reinstall_mod(m),
         }
         for name, cb in acts.items():
             a = Gio.SimpleAction.new(name, None)

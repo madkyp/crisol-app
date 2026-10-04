@@ -44,6 +44,18 @@ class GameContext:
     def plan(self, with_internal: bool = False) -> Plan:
         return make_plan(self.state, self.layout, with_internal)
 
+    @property
+    def me3_profile(self) -> Path:
+        return paths.ME3_DIR / f"{self.game.safe_key}.me3"
+
+    def is_applied(self) -> bool:
+        if self.layout.external:
+            return self.me3_profile.exists()
+        return self.deployer.is_deployed()
+
+    def loader(self):
+        return self.layout.loader(self.state.enabled_ordered(), self.state.staging)
+
 
 _contexts: dict[str, GameContext] = {}
 _ctx_lock = threading.Lock()
@@ -127,6 +139,11 @@ def download_nexus(nexus: Nexus, link: NxmLink, progress: Progress | None = None
             last = e
     else:
         raise last or DownloadError("La descarga ha fallado")
+    if not archive.is_archive(dest) or not dest.name.lower().endswith(archive.ARCHIVE_EXTS):
+        ext = archive.sniff(dest)
+        if ext:
+            dest = dest.rename(dest.with_name(dest.name + ext))
+            fname = dest.name
     # Verificación: el md5 del archivo debe corresponder a este mismo archivo en Nexus.
     verified = "size" if expected else ""
     md5 = archive.md5sum(dest)
@@ -169,6 +186,7 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     rec.files = [list(m) for m in mapping.files]
     rec.skipped = mapping.skipped
     rec.folders = mapping.folders
+    rec.packages, rec.natives, rec.savefile = mapping.packages, mapping.natives, mapping.savefile
     rec.layout = layout.id
     rec.archive = str(archive_path)
     st.add(rec)
@@ -268,15 +286,50 @@ def check_updates(ctx: GameContext, nexus: Nexus) -> int:
 
 def apply(ctx: GameContext, progress: Progress | None = None) -> Report:
     with game_lock(ctx.game):
-        return ctx.deployer.deploy(ctx.state, ctx.layout, progress)
+        layout = ctx.layout
+        if layout.external:
+            # ME3: el juego no se toca; solo se escribe el perfil con los mods activos en orden.
+            if ctx.deployer.is_deployed():
+                ctx.deployer.purge(progress)  # por si antes se aplicó con otro tipo de juego
+            mods = ctx.state.enabled_ordered()
+            ctx.me3_profile.parent.mkdir(parents=True, exist_ok=True)
+            ctx.me3_profile.write_text(layout.profile_text(mods, ctx.state.staging))
+            ctx.state.dirty_deploy = False
+            ctx.state.save()
+            return Report(placed=sum(len(m.packages) + len(m.natives) for m in mods), method="perfil ME3")
+        return ctx.deployer.deploy(ctx.state, layout, progress)
+
+
+def me3_command(ctx: GameContext) -> list[str] | None:
+    """Orden para lanzar el juego con ME3 y el perfil de Crisol (None si falta ME3)."""
+    layout = ctx.layout
+    if not layout.external:
+        return None
+    me3 = layout.find_me3([ctx.state.staging(m.uid) for m in ctx.state.mods.values()])
+    if not me3:
+        return None
+    return [str(me3), "launch", "--game", layout.me3_game, "-p", str(ctx.me3_profile)]
 
 
 def restore(ctx: GameContext, progress: Progress | None = None) -> Report:
     with game_lock(ctx.game):
+        ctx.me3_profile.unlink(missing_ok=True)
         r = ctx.deployer.purge(progress)
         ctx.state.dirty_deploy = bool(ctx.state.enabled_ordered())
         ctx.state.save()
         return r
+
+
+def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None) -> ModRecord:
+    """Vuelve a extraer un mod desde su descarga (sin bajarlo otra vez), conservando su posición."""
+    rec = ctx.state.mods[uid]
+    path = Path(rec.archive)
+    if not path.is_file():
+        raise DownloadError("Ya no está el archivo descargado de este mod; vuelve a descargarlo.")
+    if not path.name.lower().endswith(archive.ARCHIVE_EXTS) and archive.sniff(path):
+        path = path.rename(path.with_name(path.name + archive.sniff(path)))
+        rec.file_name = path.name
+    return install_archive(ctx, path, rec, progress=progress)
 
 
 def remap(ctx: GameContext) -> list[str]:
@@ -294,6 +347,7 @@ def remap(ctx: GameContext) -> list[str]:
             failed.append(m.name)
             continue
         m.files, m.skipped, m.folders, m.layout = [list(x) for x in mp.files], mp.skipped, mp.folders, layout.id
+        m.packages, m.natives, m.savefile = mp.packages, mp.natives, mp.savefile
     ctx.state.dirty_deploy = True
     ctx.state.save()
     return failed
