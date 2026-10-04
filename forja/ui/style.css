@@ -1,0 +1,132 @@
+/* Forja: tema oscuro sobre libadwaita. El acento se inyecta en tiempo de ejecución. */
+
+window.forja {
+  background-color: #101217;
+}
+
+/* ---------- biblioteca ---------- */
+.library-title { font-size: 22pt; font-weight: 800; letter-spacing: -0.5px; }
+.library-sub { color: alpha(white, 0.6); }
+
+flowbox.game-grid > flowboxchild { padding: 0; border-radius: 16px; }
+flowbox.game-grid > flowboxchild:focus-visible { outline: 2px solid var(--accent-bg-color); outline-offset: 2px; }
+
+.game-card {
+  border-radius: 16px;
+  background: #181b22;
+  border: 1px solid alpha(white, 0.06);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+.game-card:hover {
+  border-color: color-mix(in srgb, var(--accent-bg-color) 70%, transparent);
+  box-shadow: 0 12px 28px alpha(black, 0.45);
+}
+.game-card .cover { border-radius: 15px 15px 0 0; background: #20242d; }
+.game-card .card-name { font-weight: 700; font-size: 11pt; }
+.game-card .card-meta { font-size: 9pt; color: alpha(white, 0.55); }
+
+.chip {
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 8.5pt;
+  font-weight: 700;
+  background: alpha(white, 0.08);
+  color: alpha(white, 0.8);
+}
+.chip.steam { background: alpha(#66c0f4, 0.16); color: #9fd6ff; }
+.chip.umbral { background: alpha(#b48cff, 0.16); color: #d2bcff; }
+.chip.accent { background: color-mix(in srgb, var(--accent-bg-color) 25%, transparent); color: var(--accent-color); }
+.chip.warning { background: alpha(#f6c343, 0.16); color: #f6d374; }
+.chip.error { background: alpha(#ff6b6b, 0.16); color: #ff9a9a; }
+.chip.success { background: alpha(#57e389, 0.14); color: #8ff0b0; }
+
+.placeholder-icon { color: alpha(white, 0.25); }
+
+/* ---------- cabecera del juego ---------- */
+.game-hero {
+  border-radius: 22px;
+  padding: 24px 28px;
+  background-color: #151820;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-origin: border-box;
+  background-clip: border-box;
+  border: 1px solid alpha(white, 0.06);
+  box-shadow: 0 10px 30px alpha(black, 0.35);
+}
+.game-hero .hero-shade {
+  border-radius: 22px;
+}
+.game-hero .hero-cover {
+  border-radius: 14px;
+  box-shadow: 0 10px 30px alpha(black, 0.55);
+}
+.game-hero .hero-title { font-size: 28pt; font-weight: 800; letter-spacing: -0.5px; color: white; }
+.game-hero .hero-sub { color: alpha(white, 0.72); }
+
+.pill { border-radius: 999px; padding: 8px 22px; font-weight: 700; }
+
+/* ---------- tarjetas de mods ---------- */
+flowbox.mod-grid > flowboxchild { padding: 0; border-radius: 14px; }
+.mod-card {
+  border-radius: 14px;
+  background: #181b22;
+  border: 1px solid alpha(white, 0.06);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.mod-card:hover {
+  border-color: color-mix(in srgb, var(--accent-bg-color) 70%, transparent);
+  box-shadow: 0 10px 24px alpha(black, 0.4);
+}
+.mod-card .thumb { border-radius: 13px 13px 0 0; background: #20242d; }
+.mod-card .mod-name { font-weight: 700; }
+.mod-card .mod-meta { font-size: 9pt; color: alpha(white, 0.55); }
+.mod-card .mod-summary { font-size: 9.5pt; color: alpha(white, 0.75); }
+
+.mod-picture { border-radius: 14px; background: #20242d; }
+
+/* ---------- lista de instalados / orden ---------- */
+list.load-order { background: transparent; }
+list.load-order > row {
+  border-radius: 12px;
+  margin: 3px 0;
+  background: #181b22;
+  border: 1px solid alpha(white, 0.05);
+  transition: background 120ms ease;
+}
+list.load-order > row:hover { background: #1d2029; }
+list.load-order > row.disabled-mod { opacity: 0.55; }
+list.load-order > row.drop-above { box-shadow: inset 0 3px 0 var(--accent-bg-color); }
+list.load-order > row.drop-below { box-shadow: inset 0 -3px 0 var(--accent-bg-color); }
+.order-pos {
+  min-width: 30px;
+  font-weight: 800;
+  font-feature-settings: "tnum";
+  color: var(--accent-color);
+}
+.drag-handle { color: alpha(white, 0.35); }
+.drag-handle:hover { color: alpha(white, 0.8); }
+.row-thumb { border-radius: 8px; background: #20242d; }
+
+.apply-bar {
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent-bg-color) 14%, #181b22);
+  border: 1px solid color-mix(in srgb, var(--accent-bg-color) 40%, transparent);
+}
+
+/* ---------- tareas ---------- */
+.taskbar {
+  background: #14161c;
+  border-top: 1px solid alpha(white, 0.06);
+  padding: 8px 16px;
+}
+.taskbar progressbar trough, .taskbar progressbar progress { min-height: 6px; border-radius: 3px; }
+
+.note-box {
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: alpha(#f6c343, 0.08);
+  border: 1px solid alpha(#f6c343, 0.25);
+}

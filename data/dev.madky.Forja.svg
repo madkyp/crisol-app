@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a2f3a"/>
+      <stop offset="1" stop-color="#14171e"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9dee8"/>
+      <stop offset="1" stop-color="#8a93a6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffb36b"/>
+      <stop offset="0.45" stop-color="#e0703a"/>
+      <stop offset="1" stop-color="#e0703a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+  <circle cx="64" cy="50" r="30" fill="url(#glow)"/>
+  <!-- yunque -->
+  <path d="M26 60 h62 c10 0 16 -4 18 -10 h-18 v-2 h-62 z" fill="url(#metal)"/>
+  <path d="M40 60 h40 l-6 14 h-28 z" fill="#7b8396"/>
+  <path d="M44 74 h32 v6 h10 v10 h-52 v-10 h10 z" fill="url(#metal)"/>
+  <!-- chispas -->
+  <circle cx="58" cy="36" r="3" fill="#ffd8a8"/>
+  <circle cx="72" cy="30" r="2.2" fill="#ffc58a"/>
+  <circle cx="50" cy="28" r="1.8" fill="#ffe2c0"/>
+</svg>

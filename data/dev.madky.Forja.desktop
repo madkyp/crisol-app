@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Forja
+GenericName=Gestor de mods
+Comment=Gestor de mods para juegos de Steam y Umbral (Nexus Mods)
+Exec=forja %u
+Icon=dev.madky.Forja
+Terminal=false
+Categories=Game;
+Keywords=mods;nexus;steam;umbral;modding;
+MimeType=x-scheme-handler/nxm;
+StartupWMClass=dev.madky.Forja
+StartupNotify=true
