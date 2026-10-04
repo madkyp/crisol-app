@@ -72,7 +72,7 @@ def download(url: str, dest: Path, expected_size: int = 0, progress: Progress | 
     tmp = dest.with_suffix(dest.suffix + ".part")
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with requests.get(url, stream=True, timeout=30, headers={"User-Agent": "Forja"}) as r:
+        with requests.get(url, stream=True, timeout=30, headers={"User-Agent": "Crisol"}) as r:
             r.raise_for_status()
             total = int(r.headers.get("Content-Length") or expected_size or 0)
             done = 0

@@ -10,9 +10,9 @@ os.environ["XDG_DATA_HOME"] = f"{_TMP.name}/data"
 os.environ["XDG_CONFIG_HOME"] = f"{_TMP.name}/config"
 os.environ["XDG_CACHE_HOME"] = f"{_TMP.name}/cache"
 
-from forja import deploy, manager, paths  # noqa: E402
-from forja.games import Game  # noqa: E402
-from forja.store import ModRecord  # noqa: E402
+from crisol import deploy, manager, paths  # noqa: E402
+from crisol.games import Game  # noqa: E402
+from crisol.store import ModRecord  # noqa: E402
 
 paths.ensure_dirs()
 
@@ -101,7 +101,7 @@ class LooseTest(Base):
         manager.apply(self.ctx)
         self.assertTrue((self.game_dir / "BepInEx/plugins/a.dll").exists())
         self.assertFalse((self.game_dir / "bepinex").exists())
-        # Steam «verifica» y repone el original: Forja no debe borrarlo al restaurar.
+        # Steam «verifica» y repone el original: Crisol no debe borrarlo al restaurar.
         (self.game_dir / "UnityPlayer.dll").unlink()
         (self.game_dir / "UnityPlayer.dll").write_bytes(b"u")
         r = manager.restore(self.ctx)

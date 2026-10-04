@@ -9,11 +9,11 @@ def _xdg(var: str, default: str) -> Path:
     return Path(os.environ.get(var) or HOME / default)
 
 
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "forja"
-CACHE_DIR = _xdg("XDG_CACHE_HOME", ".cache") / "forja"
-STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "forja"
+CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "crisol"
+CACHE_DIR = _xdg("XDG_CACHE_HOME", ".cache") / "crisol"
+STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "crisol"
 DATA_HOME = _xdg("XDG_DATA_HOME", ".local/share")
-DATA_DIR = DATA_HOME / "forja"
+DATA_DIR = DATA_HOME / "crisol"
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LOG_DIR = STATE_DIR / "logs"

@@ -18,7 +18,7 @@ _UMBRAL_SKIP_KINDS = {"battlenet", "scummvm", "emulator", "vm"}
 
 @dataclass
 class Game:
-    key: str              # "steam:1771300" / "umbral:<id>": id estable dentro de Forja
+    key: str              # "steam:1771300" / "umbral:<id>": id estable dentro de Crisol
     source: str           # "steam" | "umbral"
     source_id: str
     name: str

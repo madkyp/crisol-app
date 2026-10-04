@@ -14,7 +14,7 @@ from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 from .. import USER_AGENT, paths
 
 log = logging.getLogger(__name__)
-_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="forja-img")
+_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="crisol-img")
 _session = requests.Session()
 _session.headers["User-Agent"] = USER_AGENT
 _textures: dict[tuple[str, int, int], Gdk.Texture] = {}
@@ -72,7 +72,7 @@ def local_texture(path: Path | None, w: int, h: int = 0) -> Gdk.Texture | None:
 
 
 def load_remote(picture: Gtk.Picture, url: str, w: int, h: int = 0) -> None:
-    """Pone en picture la imagen de url (descargada una vez a ~/.cache/forja/thumbs), a w×h."""
+    """Pone en picture la imagen de url (descargada una vez a ~/.cache/crisol/thumbs), a w×h."""
     if not url:
         return
     key = (url, w, h)

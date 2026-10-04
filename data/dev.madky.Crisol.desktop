@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=Forja
+Name=Crisol
 GenericName=Gestor de mods
 Comment=Gestor de mods para juegos de Steam y Umbral (Nexus Mods)
-Exec=forja %u
-Icon=dev.madky.Forja
+Exec=crisol %u
+Icon=dev.madky.Crisol
 Terminal=false
 Categories=Game;
 Keywords=mods;nexus;steam;umbral;modding;
 MimeType=x-scheme-handler/nxm;
-StartupWMClass=dev.madky.Forja
+StartupWMClass=dev.madky.Crisol
 StartupNotify=true

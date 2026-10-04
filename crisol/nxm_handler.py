@@ -1,4 +1,4 @@
-"""Registro de Forja como app de los enlaces nxm:// (los del botón «Mod Manager Download»)."""
+"""Registro de Crisol como app de los enlaces nxm:// (los del botón «Mod Manager Download»)."""
 from __future__ import annotations
 
 import shutil
@@ -30,16 +30,16 @@ def _installed_desktop() -> bool:
 
 
 def register() -> None:
-    """Hace a Forja la app por defecto para nxm://. Si no está instalada como paquete, crea un
+    """Hace a Crisol la app por defecto para nxm://. Si no está instalada como paquete, crea un
     .desktop de usuario que lanza esta copia."""
     if not _installed_desktop():
         here = Path(__file__).resolve().parent.parent
-        exe = shutil.which("forja") or f"env PYTHONPATH={here} {sys.executable} -m forja"
+        exe = shutil.which("crisol") or f"env PYTHONPATH={here} {sys.executable} -m crisol"
         d = paths.DATA_HOME / "applications" / DESKTOP
         d.parent.mkdir(parents=True, exist_ok=True)
         d.write_text(f"""[Desktop Entry]
 Type=Application
-Name=Forja
+Name=Crisol
 Comment=Gestor de mods para Steam y Umbral
 Exec={exe} %u
 Icon={APP_ID}

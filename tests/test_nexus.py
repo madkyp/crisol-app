@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from forja.layouts import KCD2Layout, LooseLayout, UnrealLayout, detect
-from forja.providers.base import ProviderError
-from forja.providers.nexus import Nexus, parse_nxm
+from crisol.layouts import KCD2Layout, LooseLayout, UnrealLayout, detect
+from crisol.providers.base import ProviderError
+from crisol.providers.nexus import Nexus, parse_nxm
 
 GAMES = [
     {"id": 1, "name": "Lords of the Fallen", "domain_name": "lordsofthefallen"},

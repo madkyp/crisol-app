@@ -1,4 +1,4 @@
-"""Ajustes de la aplicación (~/.config/forja/config.json)."""
+"""Ajustes de la aplicación (~/.config/crisol/config.json)."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

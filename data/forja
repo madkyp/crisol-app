@@ -1,2 +1,0 @@
-#!/bin/sh
-PYTHONPATH=/usr/lib/forja${PYTHONPATH:+:$PYTHONPATH} exec /usr/bin/python3 -m forja "$@"

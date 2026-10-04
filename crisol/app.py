@@ -17,12 +17,12 @@ from . import APP_ID, APP_NAME, VERSION, paths  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 _OPEN_GAME: str | None = None
-log = logging.getLogger("forja")
+log = logging.getLogger("crisol")
 
 
 def setup_logging(debug: bool) -> None:
     paths.ensure_dirs()
-    handlers: list[logging.Handler] = [logging.FileHandler(paths.LOG_DIR / "forja.log", mode="w")]
+    handlers: list[logging.Handler] = [logging.FileHandler(paths.LOG_DIR / "crisol.log", mode="w")]
     if debug:
         handlers.append(logging.StreamHandler(sys.stderr))
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO, handlers=handlers, force=True,
@@ -32,7 +32,7 @@ def setup_logging(debug: bool) -> None:
 
 def cli(argv: list[str]) -> int | None:
     """Órdenes sin interfaz. Devuelve el código de salida, o None para abrir la ventana."""
-    ap = argparse.ArgumentParser(prog="forja", description=f"{APP_NAME}: gestor de mods para Steam y Umbral")
+    ap = argparse.ArgumentParser(prog="crisol", description=f"{APP_NAME}: gestor de mods para Steam y Umbral")
     ap.add_argument("--debug", action="store_true", help="registro detallado en la terminal")
     ap.add_argument("--list", action="store_true", help="juegos detectados y su juego en Nexus Mods, en JSON")
     ap.add_argument("--restore", metavar="JUEGO", help="quitar los mods de un juego (clave de --list) sin abrir la ventana")
@@ -65,7 +65,7 @@ def cli(argv: list[str]) -> int | None:
     return None
 
 
-class ForjaApp(Adw.Application):
+class CrisolApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID,
                          flags=Gio.ApplicationFlags.HANDLES_OPEN)
@@ -88,7 +88,7 @@ class ForjaApp(Adw.Application):
 
     def set_accent(self, color: str) -> None:
         # Los temas de GTK del usuario (p. ej. Catppuccin de HyDE) redefinen el acento con prioridad de
-        # usuario; el de Forja va por encima para que la opción de Preferencias se respete.
+        # usuario; el de Crisol va por encima para que la opción de Preferencias se respete.
         self.accent_css.load_from_string(
             f"@define-color accent_bg_color {color};\n@define-color accent_color {color};\n"
             f"@define-color accent_fg_color white;\n"
@@ -130,4 +130,4 @@ def main(argv: list[str]) -> int:
         return code
     # GApplication no entiende nuestras opciones: solo se le pasa el enlace nxm, si lo hay.
     passthrough = [argv[0]] + [a for a in argv[1:] if a.lower().startswith("nxm:")]
-    return ForjaApp().run(passthrough)
+    return CrisolApp().run(passthrough)

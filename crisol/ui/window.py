@@ -213,7 +213,7 @@ class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app, ctl: Controller, open_game: str | None = None):
         super().__init__(application=app, title=APP_NAME, default_width=ctl.cfg.window_width,
                          default_height=ctl.cfg.window_height)
-        self.add_css_class("forja")
+        self.add_css_class("crisol")
         self.ctl = ctl
         self.toasts = Adw.ToastOverlay()
         self.nav = Adw.NavigationView(vexpand=True)
@@ -345,6 +345,6 @@ class MainWindow(Adw.ApplicationWindow):
     def show_about(self) -> None:
         from .. import VERSION
         d = Adw.AboutDialog(application_name=APP_NAME, version=VERSION, developer_name="madky",
-                            application_icon="dev.madky.Forja", license_type=Gtk.License.MIT_X11,
+                            application_icon="dev.madky.Crisol", license_type=Gtk.License.MIT_X11,
                             comments="Gestor de mods para juegos de Steam y Umbral, con Nexus Mods como fuente.")
         d.present(self)

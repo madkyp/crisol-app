@@ -146,7 +146,7 @@ class Layout:
         return dst
 
     def generated(self, ordered_folders: list[str], managed_folders: set[str]) -> dict[str, bytes]:
-        """Archivos que Forja genera para expresar el orden (p. ej. mod_order.txt)."""
+        """Archivos que Crisol genera para expresar el orden (p. ej. mod_order.txt)."""
         return {}
 
     def internal_entries(self, path: Path) -> list[str]:
@@ -283,9 +283,9 @@ class KCD2Layout(Layout):
     def generated(self, ordered_folders, managed_folders):
         if not ordered_folders:
             return {}
-        lines = ["# Generado por Forja: orden de carga de los mods (el primero se carga antes).",
-                 "# Edítalo desde Forja; los cambios hechos a mano se perderán al aplicar."]
-        # mod_order.txt es lista blanca: los mods puestos a mano (no gestionados por Forja) se
+        lines = ["# Generado por Crisol: orden de carga de los mods (el primero se carga antes).",
+                 "# Edítalo desde Crisol; los cambios hechos a mano se perderán al aplicar."]
+        # mod_order.txt es lista blanca: los mods puestos a mano (no gestionados por Crisol) se
         # añaden al final para no desactivarlos sin querer.
         managed = {f.lower() for f in managed_folders}
         ci = {f.lower() for f in ordered_folders}
@@ -297,8 +297,8 @@ class KCD2Layout(Layout):
         except OSError:
             manual = []
         if manual:
-            lines.append("# (orden de Forja)")
-        body = ordered_folders + (["# Mods instalados a mano, fuera de Forja:"] + manual if manual else [])
+            lines.append("# (orden de Crisol)")
+        body = ordered_folders + (["# Mods instalados a mano, fuera de Crisol:"] + manual if manual else [])
         return {_join(self.MODS, "mod_order.txt"): ("\n".join(lines + body) + "\n").encode()}
 
     def internal_entries(self, path):

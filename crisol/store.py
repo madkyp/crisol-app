@@ -1,4 +1,4 @@
-"""Estado por juego: mods instalados, perfiles y orden de carga (~/.local/share/forja/games/<juego>.json)."""
+"""Estado por juego: mods instalados, perfiles y orden de carga (~/.local/share/crisol/games/<juego>.json)."""
 from __future__ import annotations
 
 import secrets

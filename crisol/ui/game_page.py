@@ -41,7 +41,7 @@ class GamePage(Adw.NavigationPage):
         tv.add_top_bar(hb)
         group = Gio.SimpleActionGroup()
         for name, cb in (("settings", self.show_settings), ("open-dir", lambda: _open(game.install_dir)),
-                         ("open-downloads", lambda: _open(Path.home() / ".local/share/forja/downloads"))):
+                         ("open-downloads", lambda: _open(Path.home() / ".local/share/crisol/downloads"))):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda *_a, cb=cb: cb())
             group.add_action(a)
@@ -384,7 +384,7 @@ class GamePage(Adw.NavigationPage):
 
     def remove_mod(self, m: ModRecord) -> None:
         d = Adw.AlertDialog(heading=f"¿Desinstalar «{m.name}»?",
-                            body="Se borra de Forja (los archivos extraídos y la descarga). Si estaba aplicado, "
+                            body="Se borra de Crisol (los archivos extraídos y la descarga). Si estaba aplicado, "
                                  "sus archivos se quitan del juego al pulsar «Aplicar».")
         d.add_response("cancel", "Cancelar")
         d.add_response("remove", "Desinstalar")
@@ -467,7 +467,7 @@ class GamePage(Adw.NavigationPage):
             self.win.toast(msg, 5)
             if r.kept_changed:
                 self.win.error("Archivos cambiados por otro programa",
-                               "Estos archivos se habían cambiado fuera de Forja (p. ej. al verificar el juego en "
+                               "Estos archivos se habían cambiado fuera de Crisol (p. ej. al verificar el juego en "
                                "Steam) y se han dejado como estaban:\n\n" + "\n".join(r.kept_changed[:30]))
             self.changed()
 
@@ -479,8 +479,8 @@ class GamePage(Adw.NavigationPage):
 
     def confirm_restore(self) -> None:
         d = Adw.AlertDialog(heading="¿Restaurar el juego sin mods?",
-                            body="Se quitan del juego todos los archivos que puso Forja y se devuelven los "
-                                 "originales. Los mods siguen instalados en Forja para volver a aplicarlos.")
+                            body="Se quitan del juego todos los archivos que puso Crisol y se devuelven los "
+                                 "originales. Los mods siguen instalados en Crisol para volver a aplicarlos.")
         d.add_response("cancel", "Cancelar")
         d.add_response("restore", "Restaurar")
         d.set_response_appearance("restore", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -495,7 +495,7 @@ class GamePage(Adw.NavigationPage):
             self.win.toast(f"Juego restaurado: {r.removed} archivos quitados, {r.restored} originales devueltos", 5)
             if r.kept_changed:
                 self.win.error("Archivos cambiados por otro programa",
-                               "No se han tocado porque ya no eran los que puso Forja:\n\n"
+                               "No se han tocado porque ya no eran los que puso Crisol:\n\n"
                                + "\n".join(r.kept_changed[:30]))
             self.changed()
 

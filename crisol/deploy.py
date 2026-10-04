@@ -231,7 +231,7 @@ class Deployer:
             man["dirs"].append(m.relative_to(self.root).as_posix())
 
     def purge(self, progress: Progress | None = None) -> Report:
-        """Deja el juego como estaba antes de Forja."""
+        """Deja el juego como estaba antes de Crisol."""
         report = Report()
         man = self.manifest()
         files: dict[str, dict] = man.get("files") or {}
@@ -252,7 +252,7 @@ class Deployer:
                 # respaldo, ya inútil, se aparta en vez de borrarse.
                 report.kept_changed.append(rel)
                 if bk.exists():
-                    old = bk.with_name(bk.name + f".forja-old-{int(time.time())}")
+                    old = bk.with_name(bk.name + f".crisol-old-{int(time.time())}")
                     bk.rename(old)
                 continue
             if info.get("backup") and bk.exists():

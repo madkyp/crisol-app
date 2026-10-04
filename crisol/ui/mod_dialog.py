@@ -65,9 +65,9 @@ class ModDialog(Adw.Dialog):
             txt = "Cuenta Premium: «Instalar» descarga directamente."
         else:
             txt = ("Sin Premium, Nexus solo permite descargar desde su web: «Descargar» abre la página del archivo; "
-                   "pulsa allí «Slow download» y el navegador pasará el enlace a Forja, que lo instala solo.")
+                   "pulsa allí «Slow download» y el navegador pasará el enlace a Crisol, que lo instala solo.")
             if not nxm_handler.is_default():
-                txt += " ⚠ Forja aún no es la app de los enlaces nxm: actívalo en Preferencias."
+                txt += " ⚠ Crisol aún no es la app de los enlaces nxm: actívalo en Preferencias."
         self.how.set_label(txt)
 
     def _load(self):
@@ -149,7 +149,7 @@ class ModDialog(Adw.Dialog):
     def _open_download(self, f: FileInfo) -> None:
         # nmm=1 abre el diálogo de descarga «con gestor», que genera el enlace nxm://
         self._launch(Nexus.file_page(self.domain, self.info.mod_id, f.file_id) + "&nmm=1")
-        self.win.toast("En la web pulsa «Slow download»: Forja recibirá el enlace y lo instalará.", 8)
+        self.win.toast("En la web pulsa «Slow download»: Crisol recibirá el enlace y lo instalará.", 8)
 
     def _launch(self, url: str) -> None:
         Gtk.UriLauncher.new(url).launch(self.win, None, None)

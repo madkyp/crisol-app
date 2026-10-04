@@ -46,7 +46,7 @@ class PrefsDialog(Adw.PreferencesDialog):
             description="Sin Nexus Premium, las descargas empiezan en la web con «Mod Manager Download» / «Slow "
                         "download»; el navegador pasa un enlace nxm:// a la app registrada para ellos.")
         self.nxm = Adw.ActionRow(title="Enlaces nxm://")
-        self.nxm_btn = Gtk.Button(label="Usar Forja", valign=Gtk.Align.CENTER, css_classes=["pill"])
+        self.nxm_btn = Gtk.Button(label="Usar Crisol", valign=Gtk.Align.CENTER, css_classes=["pill"])
         self.nxm_btn.connect("clicked", self._register)
         self.nxm.add_suffix(self.nxm_btn)
         links.add(self.nxm)
@@ -86,7 +86,7 @@ class PrefsDialog(Adw.PreferencesDialog):
     def _refresh_nxm(self) -> None:
         cur = nxm_handler.current()
         if cur == nxm_handler.DESKTOP:
-            self.nxm.set_subtitle("Forja recibe los enlaces")
+            self.nxm.set_subtitle("Crisol recibe los enlaces")
             self.nxm_btn.set_visible(False)
         else:
             self.nxm.set_subtitle(GLib.markup_escape_text(f"Ahora los abre: {cur}" if cur else "Ninguna app los abre"))
