@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -343,11 +344,15 @@ def install_from_nxm(ctx: GameContext, nexus: Nexus, link: NxmLink, progress: Pr
             progress(f * 0.9, msg)
 
     path, verified, meta = download_nexus(nexus, link, dl_progress, cancel)
-    # ¿Actualización de un mod ya instalado? Mismo mod y mismo título de archivo → se conserva el uid.
+    # ¿Actualización de un mod ya instalado? Mismo archivo, o mismo mod y mismo título de archivo
+    # (o el único archivo instalado de ese mod) → se conserva el uid, y con él su posición.
     existing = ctx.state.find("nexus", link.mod_id, link.file_id)
     if existing is None:
         same_mod = [m for m in ctx.state.mods.values() if m.provider == "nexus" and m.mod_id == link.mod_id]
-        if len(same_mod) == 1:
+        titled = [m for m in same_mod if m.file_title and m.file_title == meta.get("file_title")]
+        if titled:
+            existing = titled[0]
+        elif len(same_mod) == 1:
             existing = same_mod[0]
     rec = existing or ModRecord(uid=ctx.state.new_uid(), name=info.name)
     old_archive = Path(rec.archive) if rec.archive else None
@@ -357,6 +362,7 @@ def install_from_nxm(ctx: GameContext, nexus: Nexus, link: NxmLink, progress: Pr
     rec.latest_version = info.version
     rec.author, rec.thumbnail = info.author, info.thumbnail
     rec.md5, rec.size, rec.file_name = meta["md5"], meta["size"], meta["file_name"]
+    rec.file_title = meta.get("file_title") or rec.file_title
     rec.requirements = info.requirements
     rec.verified = verified
     rec = install_archive(ctx, path, rec, progress=lambda f, m: progress and progress(0.9 + f * 0.1, m),
@@ -378,6 +384,17 @@ def missing_requirements(ctx: GameContext) -> dict[str, list[dict]]:
     return out
 
 
+def update_target(nexus: Nexus, rec: ModRecord):
+    """Archivo de Nexus con la versión nueva de un mod instalado (FileInfo) o None."""
+    files = [f for f in nexus.files(rec.game_domain, rec.mod_id)
+             if f.category in ("MAIN", "UPDATE", "OPTIONAL", "MISCELLANEOUS") and f.file_id != rec.file_id]
+    if not files:
+        return None
+    same = [f for f in files if rec.file_title and f.name == rec.file_title]
+    pool = same or [f for f in files if f.category == "MAIN"] or files
+    return max(pool, key=lambda f: f.date)
+
+
 def check_updates(ctx: GameContext, nexus: Nexus) -> int:
     """Consulta las versiones actuales en Nexus. Devuelve cuántos mods tienen actualización."""
     by_domain: dict[str, list[ModRecord]] = {}
@@ -389,6 +406,7 @@ def check_updates(ctx: GameContext, nexus: Nexus) -> int:
         for m in mods:
             if m.mod_id in versions:
                 m.latest_version = versions[m.mod_id]
+    ctx.state.updates_checked = time.time()
     ctx.state.save()
     return sum(1 for m in ctx.state.mods.values() if m.update_available)
 

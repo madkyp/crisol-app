@@ -21,6 +21,7 @@ class ModRecord:
     mod_id: int = 0
     file_id: int = 0
     file_name: str = ""
+    file_title: str = ""         # título del archivo en Nexus (p. ej. «Convergence ER»): para encontrar su versión nueva
     version: str = ""
     author: str = ""
     thumbnail: str = ""
@@ -74,6 +75,7 @@ class GameState:
             self.profiles[DEFAULT_PROFILE] = Profile()
         self.active: str = raw.get("active") if raw.get("active") in self.profiles else next(iter(self.profiles))
         self.dirty_deploy: bool = bool(raw.get("dirty_deploy"))
+        self.updates_checked: float = float(raw.get("updates_checked") or 0)
         self._repair()
 
     def _repair(self) -> None:
@@ -89,7 +91,7 @@ class GameState:
             "game": self.game_key, "layout": self.layout, "nexus_domain": self.nexus_domain,
             "mods": {u: asdict(m) for u, m in self.mods.items()},
             "profiles": {n: asdict(p) for n, p in self.profiles.items()},
-            "active": self.active, "dirty_deploy": self.dirty_deploy,
+            "active": self.active, "dirty_deploy": self.dirty_deploy, "updates_checked": self.updates_checked,
         })
 
     # ---------- mods ----------

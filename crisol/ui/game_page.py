@@ -354,6 +354,10 @@ class GamePage(Adw.NavigationPage):
         upd = Gtk.Button()
         upd.set_child(Adw.ButtonContent(icon_name="view-refresh-symbolic", label="Buscar actualizaciones"))
         upd.connect("clicked", lambda *_: self.check_updates())
+        self.update_all = Gtk.Button(css_classes=["suggested-action"], visible=False)
+        self.update_all.connect("clicked", lambda *_: self.update_mods(
+            [m for m in self.ctx.state.ordered() if m.update_available]))
+        bar.append(self.update_all)
         bar.append(imp)
         bar.append(upd)
         box.append(bar)
@@ -406,6 +410,9 @@ class GamePage(Adw.NavigationPage):
         self.installed_page.set_title(f"Instalados ({len(st.mods)})" if st.mods else "Instalados")
         self.installed_page.set_needs_attention(st.dirty_deploy and bool(st.mods))
         self._missing = manager.missing_requirements(self.ctx)
+        n_upd = sum(1 for m in st.mods.values() if m.update_available)
+        self.update_all.set_visible(bool(n_upd))
+        self.update_all.set_label(f"Actualizar todo ({n_upd})")
         self._show_space()
         self._show_loader()
         self._fill_list()
@@ -671,9 +678,34 @@ class GamePage(Adw.NavigationPage):
         run_async(work, done, fail)
 
     def update_mod(self, m: ModRecord) -> None:
-        info = ModInfo(provider="nexus", mod_id=m.mod_id, name=m.name, author=m.author, version=m.latest_version,
-                       thumbnail=m.thumbnail)
-        self.open_mod(info)
+        self.update_mods([m])
+
+    def update_mods(self, mods: list[ModRecord]) -> None:
+        """Busca el archivo nuevo de cada mod y lo instala en su sitio (con Premium, directo; sin Premium,
+        abriendo su página de descarga uno tras otro)."""
+        from ..providers.base import CollectionMod
+        task = self.win.taskbar.add("Buscando los archivos nuevos")
+
+        def work():
+            items = []
+            for m in mods:
+                f = manager.update_target(self.ctl.nexus, m)
+                if f:
+                    items.append(CollectionMod(m.mod_id, f.file_id, m.name, f.name, f.version, f.size, False))
+            return items
+
+        def done(items):
+            task.done()
+            if not items:
+                self.win.toast("No se ha encontrado un archivo nuevo en Nexus Mods")
+                return
+            self.win.install_collection(self.game, self.ctx.state.nexus_domain,
+                                        "actualizaciones" if len(items) > 1 else items[0].name, items)
+
+        def fail(e):
+            task.done()
+            self.win.error("No se pudo actualizar", e)
+        run_async(work, done, fail)
 
     def import_file(self) -> None:
         dlg = Gtk.FileDialog(title="Importar mod")
@@ -957,7 +989,7 @@ class ModRow(Gtk.ListBoxRow):
         box.append(sw)
         menu = Gio.Menu()
         if m.update_available:
-            menu.append("Actualizar…", "row.update")
+            menu.append(f"Actualizar a v{m.latest_version}", "row.update")
         menu.append("Subir", "row.up")
         menu.append("Bajar", "row.down")
         menu.append("Al principio", "row.top")

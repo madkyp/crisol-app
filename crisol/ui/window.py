@@ -107,9 +107,15 @@ class GameCard(Gtk.Box):
         st = manager.context(game).state
         n = len(st.mods)
         if n:
-            badge = Gtk.Label(label=f"{len(st.profile.enabled)}/{n} mods", css_classes=["chip", "accent"],
-                              halign=Gtk.Align.END, valign=Gtk.Align.START, margin_top=8, margin_end=8)
-            cover.add_overlay(badge)
+            badges = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, halign=Gtk.Align.END,
+                             valign=Gtk.Align.START, margin_top=8, margin_end=8)
+            badges.append(Gtk.Label(label=f"{len(st.profile.enabled)}/{n} mods", css_classes=["chip", "accent"],
+                                    halign=Gtk.Align.END))
+            upd = sum(1 for m in st.mods.values() if m.update_available)
+            if upd:
+                badges.append(Gtk.Label(label=f"{upd} actualización" + ("es" if upd > 1 else ""),
+                                        css_classes=["chip", "success"], halign=Gtk.Align.END))
+            cover.add_overlay(badges)
         self.append(cover)
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=12, margin_end=12,
                        margin_top=10, margin_bottom=12)
@@ -260,6 +266,7 @@ class MainWindow(Adw.ApplicationWindow):
         def done(_games):
             self._scanned = True
             self.library.populate()
+            self._auto_check_updates()
             g = next((g for g in self.ctl.games if g.key == self._open_game), None)
             if g:
                 self._open_game = None
@@ -268,6 +275,32 @@ class MainWindow(Adw.ApplicationWindow):
                 self.handle_nxm(u)
             self._pending_nxm.clear()
         run_async(self.ctl.scan, done, lambda e: self.error("No se pudieron leer los juegos", e))
+
+    def _auto_check_updates(self) -> None:
+        """Al arrancar, como mucho cada 12 h por juego: ¿hay versiones nuevas de los mods instalados?"""
+        import time
+        stale = [g for g in self.ctl.games if manager.context(g).state.mods
+                 and time.time() - manager.context(g).state.updates_checked > 12 * 3600]
+        if not stale:
+            return
+
+        def work():
+            total = 0
+            for g in stale:
+                try:
+                    total += manager.check_updates(manager.context(g), self.ctl.nexus)
+                except Exception as e:  # noqa: BLE001 — sin red no pasa nada, se reintenta otro día
+                    log.info("no se pudieron comprobar actualizaciones de %s: %s", g.name, e)
+            return total
+
+        def done(total):
+            self.refresh_library()
+            page = self.current_game_page()
+            if page:
+                page.refresh_installed()
+            if total:
+                self.toast(f"Hay {total} mods con actualización", 6)
+        run_async(work, done)
 
     def _account_checked(self) -> None:
         if self.ctl.account_error:
@@ -405,8 +438,7 @@ class MainWindow(Adw.ApplicationWindow):
         if advance:
             q["index"] += 1
         if q["index"] >= len(q["items"]):
-            self.toast(f"Colección «{q['name']}» instalada: {len(q['items'])} mods. Pulsa «Aplicar» para llevarla "
-                       "al juego.", 8)
+            self.toast(f"«{q['name']}»: {len(q['items'])} mods instalados. Pulsa «Aplicar» para llevarlos al juego.", 8)
             self._queue = None
             return
         it = q["items"][q["index"]]
