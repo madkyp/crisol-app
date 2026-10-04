@@ -27,7 +27,7 @@ Crisol finds the games you have installed, searches Nexus Mods for each one, dow
 
 ## 📸 Screenshots
 
-Using **ELDEN RING** + **The Convergence** as the example.
+Using **ELDEN RING** + **The Convergence** as the example (interface in Spanish; it's also available in English).
 
 | Library | Game page: mods and Mod Engine 3 |
 |---|---|
@@ -36,13 +36,15 @@ Using **ELDEN RING** + **The Convergence** as the example.
 | ![Elden Ring, mod search](screenshots/search.png) | ![The Convergence](screenshots/mod.png) |
 | **Nexus collections** | **A collection's mods, installed in order** |
 | ![Elden Ring collections](screenshots/collections.png) | ![Elden Essentials](screenshots/collection.png) |
+| **Mod loader check** (Tainted Grail: BepInEx suggested from Nexus) | **FOMOD installer wizard** |
+| ![Mod loader check](screenshots/loader.png) | ![FOMOD wizard](screenshots/fomod.png) |
 
 ---
 
 ## ✨ Features
 
 ### 📚 Library
-- Detects installed **Steam** games (every library in `libraryfolders.vdf`) and **Umbral** games (`~/.config/umbral/config.json`), with the covers Steam and Umbral already have on disk.
+- Detects installed **Steam** games (every library in `libraryfolders.vdf`) and **Umbral** games (`~/.config/umbral/config.json`), with the covers Steam and Umbral already have on disk (when Steam has no portrait cover cached, the official one is fetched once from Steam's CDN; landscape images are shown whole over a blurred backdrop instead of being cropped).
 - Links each game to its Nexus Mods page automatically (and lets you fix it when the name differs, e.g. *Lords of the Fallen (2023)*). Games without mods on Nexus are hidden unless you ask to see them.
 
 ### 🔎 Search and download
