@@ -274,7 +274,7 @@ class Nexus(ModProvider):
         if key and expires:
             path += "?" + urllib.parse.urlencode({"key": key, "expires": expires})
         links = self._v1(path)
-        return [l["URI"] for l in links if isinstance(l, dict) and l.get("URI")]  # type: ignore[union-attr]
+        return [x["URI"] for x in links if isinstance(x, dict) and x.get("URI")]  # type: ignore[union-attr]
 
     def md5_search(self, game_domain: str, md5: str) -> list[dict]:
         try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import pwd
 import re
 import subprocess
 from pathlib import Path
@@ -120,7 +121,7 @@ class GamePage(Adw.NavigationPage):
         self.loader_chip = Gtk.Label(css_classes=["chip"])
         chips.append(self.loader_chip)
         info.append(chips)
-        path = Gtk.Label(label=str(g.install_dir).replace(str(Path.home()), "~"), xalign=0,
+        path = Gtk.Label(label=_tilde(str(g.install_dir)), xalign=0,
                          ellipsize=Pango.EllipsizeMode.MIDDLE, css_classes=["hero-sub", "caption"])
         info.append(path)
         self.hero_status = Gtk.Label(xalign=0, css_classes=["hero-sub"], wrap=True)
@@ -427,7 +428,8 @@ class GamePage(Adw.NavigationPage):
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
         title = f"Cargador de mods: {level}" + ("" if ld.level == "none" else f" — {ld.name}{state}")
         col.append(Gtk.Label(label=title, xalign=0, css_classes=["heading"]))
-        col.append(Gtk.Label(label=(f"{ld.engine}. " if ld.engine and ld.engine not in ld.detail else "") + ld.detail,
+        col.append(Gtk.Label(label=_tilde((f"{ld.engine}. " if ld.engine and ld.engine not in ld.detail else "")
+                                    + ld.detail),
                              xalign=0, wrap=True, css_classes=["caption"]))
         self.loader_links = Gtk.Box(spacing=6)
         col.append(self.loader_links)
@@ -458,7 +460,8 @@ class GamePage(Adw.NavigationPage):
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
             col.append(Gtk.Label(label="Para jugar desde Steam: Propiedades → Opciones de lanzamiento", xalign=0,
                                  css_classes=["heading"]))
-            col.append(Gtk.Label(label=line, xalign=0, wrap=True, selectable=True, css_classes=["caption", "monospace"]))
+            col.append(Gtk.Label(label=_tilde(line), xalign=0, wrap=True, selectable=True,
+                                 css_classes=["caption", "monospace"]))
             s.append(col)
             copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copiar",
                               css_classes=["flat"])
@@ -493,7 +496,7 @@ class GamePage(Adw.NavigationPage):
 
     def _me3_failed(self, logfile: Path) -> None:
         text = re.sub(r"\x1b\[[0-9;]*m", "", logfile.read_text(errors="replace"))
-        errors = [l for l in text.splitlines() if "ERROR" in l] or text.splitlines()[-3:]
+        errors = [ln for ln in text.splitlines() if "ERROR" in ln] or text.splitlines()[-3:]
         msg = errors[-1].split("error=")[-1].strip() if errors else "error desconocido"
         hint = ""
         m = re.search(r"Proton runtime (\S+)", msg)
@@ -719,6 +722,13 @@ class GamePage(Adw.NavigationPage):
         self._update_hero()
         self.refresh_installed()
         self.search(reset=True)
+
+
+def _tilde(text: str) -> str:
+    """Abrevia la carpeta personal con «~» (la de $HOME y la del usuario en el sistema)."""
+    for home in sorted({str(Path.home()), pwd.getpwuid(os.getuid()).pw_dir}, key=len, reverse=True):
+        text = text.replace(home, "~")
+    return text
 
 
 def _clear(box: Gtk.Box) -> None:
