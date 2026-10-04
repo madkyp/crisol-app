@@ -243,6 +243,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.connect("close-request", self._on_close)
         self.rescan()
         run_async(self.ctl.validate_account, lambda _r: self._account_checked())
+        from .. import selfupdate
+        run_async(selfupdate.latest, self._new_version)
 
     def _on_close(self, *_u):
         w, h = self.get_default_size()
@@ -275,6 +277,41 @@ class MainWindow(Adw.ApplicationWindow):
                 self.handle_nxm(u)
             self._pending_nxm.clear()
         run_async(self.ctl.scan, done, lambda e: self.error(_('No se pudieron leer los juegos'), e))
+
+    def _new_version(self, info: dict | None) -> None:
+        """Hay una versión nueva de Crisol en GitHub: aviso con «Instalar»."""
+        if not info:
+            return
+        toast = Adw.Toast(title=GLib.markup_escape_text(_("Hay una versión nueva de Crisol: {0}").format(info["version"])),
+                          timeout=0, button_label=_("Instalar") if info.get("asset") else _("Ver"))
+        toast.connect("button-clicked", lambda *_a: self._install_version(info))
+        self.toasts.add_toast(toast)
+
+    def _install_version(self, info: dict) -> None:
+        import subprocess
+        from .. import selfupdate
+        if not info.get("asset"):
+            Gtk.UriLauncher.new(info["url"]).launch(self, None, None)
+            return
+        task = self.taskbar.add(_("Descargando Crisol {0}").format(info["version"]))
+
+        def work():
+            path = selfupdate.download(info["asset"])
+            # pkexec pide la contraseña con la ventana de polkit; pacman instala el paquete.
+            r = subprocess.run(["pkexec", "pacman", "-U", "--noconfirm", path], capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or r.stdout).strip()[-600:] or _("pacman no pudo instalar el paquete"))
+            return path
+
+        def done(_path):
+            task.done()
+            self.error(_("Crisol {0} instalado").format(info["version"]),
+                       _("Cierra y vuelve a abrir Crisol para usar la versión nueva."))
+
+        def fail(e):
+            task.done()
+            self.error(_("No se pudo instalar la versión nueva"), e)
+        run_async(work, done, fail)
 
     def _auto_check_updates(self) -> None:
         """Al arrancar, como mucho cada 12 h por juego: ¿hay versiones nuevas de los mods instalados?"""

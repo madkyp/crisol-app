@@ -1,7 +1,7 @@
 # Maintainer: madky
 pkgname=crisol
-pkgver=0.1.0
-pkgrel=8
+pkgver=0.2.0
+pkgrel=1
 pkgdesc="Mod manager for Steam and Umbral games on Arch/Hyprland, with Nexus Mods (GTK4/libadwaita)"
 arch=('any')
 url='https://github.com/madkyp/crisol-app'
