@@ -54,6 +54,32 @@ class FileInfo:
 
 
 @dataclass
+class CollectionInfo:
+    slug: str
+    name: str
+    summary: str = ""
+    image: str = ""
+    author: str = ""
+    mod_count: int = 0
+    size: int = 0
+    endorsements: int = 0
+    downloads: int = 0
+    revision: int = 0
+    adult: bool = False
+
+
+@dataclass
+class CollectionMod:
+    mod_id: int
+    file_id: int
+    name: str               # nombre del mod
+    file_name: str          # título del archivo
+    version: str
+    size: int
+    optional: bool
+
+
+@dataclass
 class SearchPage:
     mods: list[ModInfo]
     total: int

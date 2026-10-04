@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 import requests
 
 from .. import APP_NAME, VERSION, jsonio, paths
-from .base import (AuthError, FileInfo, ModInfo, ModProvider, PremiumRequired, ProviderError, RateLimited,
+from .base import (AuthError, CollectionInfo, CollectionMod, FileInfo, ModInfo, ModProvider, PremiumRequired, ProviderError, RateLimited,
                    SearchPage)
 
 log = logging.getLogger(__name__)
@@ -216,6 +216,44 @@ class Nexus(ModProvider):
                          {"f": f, "s": s, "o": offset, "c": count})
         m = data.get("mods") or {}
         return SearchPage([self._mod(n) for n in m.get("nodes") or []], int(m.get("totalCount") or 0))
+
+    # ---------- colecciones ----------
+    def collections(self, game_domain: str, offset: int = 0, count: int = 20) -> tuple[list[CollectionInfo], int]:
+        f: dict = {"gameDomain": [{"value": game_domain, "op": "EQUALS"}]}
+        if not self.show_adult:
+            f["adultContent"] = [{"value": False, "op": "EQUALS"}]
+        data = self._gql("""query($f:CollectionsSearchFilter,$o:Int,$c:Int){collectionsV2(filter:$f,
+            sort:[{endorsements:{direction:DESC}}],offset:$o,count:$c){totalCount nodes{slug name summary
+            endorsements totalDownloads adultContent user{name} tileImage{thumbnailUrl(size:med)}
+            latestPublishedRevision{revisionNumber modCount totalSize}}}}""", {"f": f, "o": offset, "c": count})
+        c = data.get("collectionsV2") or {}
+        out = []
+        for n in c.get("nodes") or []:
+            rev = n.get("latestPublishedRevision") or {}
+            out.append(CollectionInfo(
+                slug=n["slug"], name=n.get("name") or "", summary=n.get("summary") or "",
+                image=((n.get("tileImage") or {}).get("thumbnailUrl") or ""),
+                author=(n.get("user") or {}).get("name", ""), mod_count=int(rev.get("modCount") or 0),
+                size=int(rev.get("totalSize") or 0), endorsements=int(n.get("endorsements") or 0),
+                downloads=int(n.get("totalDownloads") or 0), revision=int(rev.get("revisionNumber") or 0),
+                adult=bool(n.get("adultContent"))))
+        return out, int(c.get("totalCount") or 0)
+
+    def collection_mods(self, game_domain: str, slug: str) -> list[CollectionMod]:
+        """Mods de la última revisión publicada, en el orden de la colección."""
+        data = self._gql("""query($s:String!,$d:String){collection(slug:$s,domainName:$d){latestPublishedRevision{
+            modFiles{fileId optional file{modId name version size mod{name}}}}}}""", {"s": slug, "d": game_domain})
+        rev = ((data.get("collection") or {}).get("latestPublishedRevision")) or {}
+        out = []
+        for mf in rev.get("modFiles") or []:
+            f = mf.get("file") or {}
+            if not f.get("modId"):
+                continue  # archivos externos (fuera de Nexus): no se pueden descargar desde aquí
+            out.append(CollectionMod(mod_id=int(f["modId"]), file_id=int(mf["fileId"]),
+                                     name=(f.get("mod") or {}).get("name") or f.get("name") or "",
+                                     file_name=f.get("name") or "", version=f.get("version") or "",
+                                     size=int(f.get("size") or 0) * 1024, optional=bool(mf.get("optional"))))
+        return out
 
     def find_loaders(self, game_domain: str, terms: tuple) -> list[ModInfo]:
         """Mods de cargadores publicados para el juego (p. ej. «BepInEx», «UE4SS»), el más descargado de cada uno."""

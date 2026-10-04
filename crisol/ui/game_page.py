@@ -61,6 +61,10 @@ class GamePage(Adw.NavigationPage):
         self.stack.add_titled_with_icon(self._build_search(), "search", "Buscar mods", "system-search-symbolic")
         self.installed_page = self.stack.add_titled_with_icon(self._build_installed(), "installed", "Instalados",
                                                               "view-list-bullet-symbolic")
+        self.stack.add_titled_with_icon(self._build_collections(), "collections", "Colecciones",
+                                        "view-grid-symbolic")
+        self.stack.connect("notify::visible-child-name", self._tab_changed)
+        self._collections_loaded = False
         switcher = Adw.InlineViewSwitcher(stack=self.stack, halign=Gtk.Align.START)
         switcher.add_css_class("round")
         body.append(switcher)
@@ -267,6 +271,59 @@ class GamePage(Adw.NavigationPage):
         self.search_status.set_description(GLib.markup_escape_text(desc))
         self.search_stack.set_visible_child_name("status")
         self.more.set_visible(False)
+
+    # ================================================================ colecciones
+    def _build_collections(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, margin_top=12)
+        box.append(Gtk.Label(label="Packs de mods preparados por la comunidad. Se instalan en el orden de la colección.",
+                             xalign=0, wrap=True, css_classes=["dim-label", "caption"]))
+        self.col_grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=14, row_spacing=14,
+                                    max_children_per_line=8, min_children_per_line=2, homogeneous=True,
+                                    css_classes=["mod-grid"], valign=Gtk.Align.START, activate_on_single_click=True)
+        self.col_grid.connect("child-activated", lambda _f, c: self.open_collection(c.get_child().info))
+        self.col_stack = Gtk.Stack()
+        self.col_stack.add_named(Adw.Spinner(halign=Gtk.Align.CENTER, width_request=40, height_request=40,
+                                             margin_top=40), "loading")
+        self.col_stack.add_named(self.col_grid, "grid")
+        self.col_status = Adw.StatusPage(icon_name="view-grid-symbolic", title="Sin colecciones")
+        self.col_status.add_css_class("compact")
+        self.col_stack.add_named(self.col_status, "status")
+        box.append(self.col_stack)
+        return box
+
+    def _tab_changed(self, *_):
+        if self.stack.get_visible_child_name() == "collections" and not self._collections_loaded:
+            self._collections_loaded = True
+            self._load_collections()
+
+    def _load_collections(self) -> None:
+        from .collections import CollectionCard
+        dom = self.ctx.state.nexus_domain
+        if not dom:
+            self.col_status.set_description("Este juego no está enlazado con Nexus Mods.")
+            self.col_stack.set_visible_child_name("status")
+            return
+
+        def done(res):
+            cols, total = res
+            for c in cols:
+                self.col_grid.append(CollectionCard(c))
+            if cols:
+                self.col_stack.set_visible_child_name("grid")
+            else:
+                self.col_status.set_description("Nadie ha publicado colecciones para este juego en Nexus Mods.")
+                self.col_stack.set_visible_child_name("status")
+
+        def fail(e):
+            self._collections_loaded = False
+            self.col_status.set_title("No se pudieron cargar")
+            self.col_status.set_description(GLib.markup_escape_text(str(e)))
+            self.col_stack.set_visible_child_name("status")
+        run_async(self.ctl.nexus.collections, done, fail, dom, 0, 40)
+
+    def open_collection(self, info) -> None:
+        from .collections import CollectionDialog
+        CollectionDialog(self, info).present(self.win)
 
     def open_mod(self, info: ModInfo) -> None:
         from .mod_dialog import ModDialog

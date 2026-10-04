@@ -227,6 +227,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_content(self.toasts)
         self._pending_nxm: list[str] = []
         self._waiting: dict[tuple[str, int, int], Task] = {}
+        self._queue: dict | None = None   # colección en instalación: {game, domain, name, items, index}
         self._scanned = False
         self._open_game = open_game
         for name, cb in (("prefs", self.show_prefs), ("rescan", lambda: self.rescan()), ("about", self.show_about)):
@@ -330,6 +331,9 @@ class MainWindow(Adw.ApplicationWindow):
             if task.cancel.is_set():
                 self._waiting.pop(key, None)
                 task.done()
+                if self._queue and self._queue_key() == key:
+                    self.toast(f"Instalación de la colección «{self._queue['name']}» detenida")
+                    self._queue = None
                 return False
             return key in self._waiting
         GLib.timeout_add(500, check)
@@ -347,18 +351,27 @@ class MainWindow(Adw.ApplicationWindow):
                 return manager.install_from_nxm(ctx, self.ctl.nexus, link, task.update, task.cancel,
                                                 chooser=make_chooser(self, game.install_dir))
 
+        in_queue = bool(self._queue) and self._queue_key() == (link.domain, link.mod_id, link.file_id)
+
         def done(rec):
             task.done()
             if not self.ctl.cfg.keep_archives:
                 manager.delete_archive(ctx, rec.uid)
-            self.toast(f"«{rec.name}» instalado. Pulsa «Aplicar» para llevarlo al juego.", 6)
+            if not in_queue:
+                self.toast(f"«{rec.name}» instalado. Pulsa «Aplicar» para llevarlo al juego.", 6)
             page = self.current_game_page(game)
             if page:
                 page.refresh_installed()
             self.refresh_library()
+            if in_queue:
+                self._queue_next(advance=True)
 
         def fail(e):
             task.done()
+            if in_queue:
+                self.error(f"Colección «{self._queue['name']}» detenida", e)
+                self._queue = None
+                return
             if isinstance(e, manager.InstallCancelled):
                 self.toast("Instalación cancelada")
             elif task.cancel.is_set():
@@ -366,6 +379,43 @@ class MainWindow(Adw.ApplicationWindow):
             else:
                 self.error("No se pudo instalar el mod", e)
         run_async(work, done, fail)
+
+    # ---------- colecciones: instalar varios mods en orden ----------
+    def install_collection(self, game: Game, domain: str, name: str, items: list) -> None:
+        """items: CollectionMod en el orden de la colección (los que se quieren instalar)."""
+        if self._queue:
+            self.error("Ya hay una colección instalándose", f"Espera a que termine «{self._queue['name']}».")
+            return
+        if not self.ctl.nexus.api_key:
+            self.error("Falta la API key de Nexus Mods", "Ponla en Preferencias → Nexus Mods.")
+            return
+        self._queue = {"game": game, "domain": domain, "name": name, "items": items, "index": 0}
+        self._queue_next(advance=False)
+
+    def _queue_key(self):
+        q = self._queue
+        it = q["items"][q["index"]]
+        return (q["domain"], it.mod_id, it.file_id)
+
+    def _queue_next(self, advance: bool) -> None:
+        from ..providers.nexus import Nexus, NxmLink
+        q = self._queue
+        if not q:
+            return
+        if advance:
+            q["index"] += 1
+        if q["index"] >= len(q["items"]):
+            self.toast(f"Colección «{q['name']}» instalada: {len(q['items'])} mods. Pulsa «Aplicar» para llevarla "
+                       "al juego.", 8)
+            self._queue = None
+            return
+        it = q["items"][q["index"]]
+        n, total = q["index"] + 1, len(q["items"])
+        if self.ctl.is_premium:
+            self.install_nxm(q["game"], NxmLink(q["domain"], it.mod_id, it.file_id, None, None))
+        else:
+            Gtk.UriLauncher.new(Nexus.file_page(q["domain"], it.mod_id, it.file_id) + "&nmm=1").launch(self, None, None)
+            self.wait_for_nxm(q["game"], q["domain"], it.mod_id, it.file_id, f"{it.name} ({n}/{total})")
 
     # ---------- diálogos ----------
     def show_prefs(self) -> None:
