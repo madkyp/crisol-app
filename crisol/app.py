@@ -50,7 +50,7 @@ def cli(argv: list[str]) -> int | None:
         from . import manager
         from .controller import Controller
         ctl = Controller()
-        games = ctl.scan(refresh=False)  # sin esperar a la red: es para otras apps (Control Deck, Umbral)
+        games = ctl.scan(refresh=False)  # sin esperar a la red: es para otras apps (Gaming Deck, Umbral)
         if args.list:
             print(json.dumps([game_status(ctl, g) for g in games], indent=1, ensure_ascii=False))
             return 0

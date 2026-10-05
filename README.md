@@ -149,7 +149,7 @@ Crisol follows the [Nexus Mods API acceptable use policy](https://help.nexusmods
 Crisol works with the author's other apps, and both use the same game keys (`steam:<appid>`, `umbral:<id>`):
 
 - **[Umbral](https://github.com/madkyp/umbral-project)** (≥ 0.14.2): each game's ⋯ menu has **Mods (Crisol)**. Mods Crisol applies are in the game folder, so Umbral's **Play** already uses them. Crisol also reads Umbral's `running.json` so it never changes the files of a running game.
-- **[Control Deck](https://github.com/madkyp/control-deck)**: LIBRARY shows a **MODS** card for the selected game (mods on, profile, pending changes, updates, missing loader) with **PLAY WITH MODS** and **OPEN IN CRISOL**.
+- **[Gaming Deck](https://github.com/madkyp/gaming-deck)** (formerly the GAMING tab of Control Deck): each game's page shows a **MODS** card (mods on, profile, pending changes, updates, missing loader) with **PLAY WITH MODS** and **OPEN IN CRISOL**.
 
 Other apps can use the same: `crisol --list` prints, for each game, `key, name, source, id, dir, nexus, layout, mods, enabled, profile, applied, pending_changes, updates, loader {name, level, installed}` (it doesn't wait for the network); `crisol --game <key>` opens a game; `crisol --play <key>` plays it with mods.
 
