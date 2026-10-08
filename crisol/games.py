@@ -28,6 +28,8 @@ class Game:
     icon: Path | None = None    # icono pequeño
     logo: Path | None = None
     prefix: Path | None = None  # prefijo de Wine/Proton (drive_c está dentro), si lo hay
+    build: str = ""             # versión instalada del juego (Steam: buildid del appmanifest)
+    updated_at: int = 0         # cuándo la actualizó Steam (epoch)
 
     @property
     def safe_key(self) -> str:
@@ -116,7 +118,9 @@ def scan_steam() -> list[Game]:
                 continue
             pfx = lib / "steamapps" / "compatdata" / appid / "pfx"
             games.append(Game(key=f"steam:{appid}", source="steam", source_id=appid, name=name,
-                              install_dir=d, prefix=pfx if pfx.is_dir() else None, **_steam_art(root, appid)))
+                              install_dir=d, prefix=pfx if pfx.is_dir() else None,
+                              build=st.get("buildid", ""), updated_at=int(st.get("LastUpdated") or 0),
+                              **_steam_art(root, appid)))
     return games
 
 

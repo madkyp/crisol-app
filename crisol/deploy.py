@@ -43,6 +43,7 @@ class Conflict:
     winner: str                 # uid
     losers: list[str]           # uids, en orden de carga
     internal: bool = False      # conflicto dentro de paquetes (.pak), no de archivos
+    chosen: bool = False        # el ganador lo eligió el usuario (no el orden)
 
 
 @dataclass
@@ -120,13 +121,20 @@ def _stamp(p: Path) -> dict:
 def make_plan(state: GameState, layout: Layout, with_internal: bool = False) -> Plan:
     plan = Plan()
     owners: dict[str, list[str]] = {}
-    mods = state.enabled_ordered()
+    sources: dict[tuple[str, str], Path] = {}
+    mods = [m for m in state.enabled_ordered() if not m.overlays]   # los ajustes ya están dentro de otros mods
     for pos, m in enumerate(mods, start=1):
         stg = state.staging(m.uid)
         for src, dst in m.files:
             target = _safe_rel(layout.target(dst, pos))
             owners.setdefault(target.lower(), []).append(m.uid)
             plan.files[target.lower()] = (m.uid, stg / src)
+            sources[(target.lower(), m.uid)] = stg / src
+    # El ganador elegido a mano para un archivo manda sobre el orden (con ME3 el orden lo aplica ME3).
+    chosen = {} if layout.external else {k: u for k, u in state.profile.overrides.items()
+                                         if len(owners.get(k, ())) > 1 and u in owners[k]}
+    for k, u in chosen.items():
+        plan.files[k] = (u, sources[(k, u)])
     # Las claves en minúsculas evitan dos archivos «iguales para Wine»; se recupera la ruta real.
     real: dict[str, str] = {}
     for pos, m in enumerate(mods, start=1):
@@ -136,7 +144,8 @@ def make_plan(state: GameState, layout: Layout, with_internal: bool = False) -> 
     plan.files = {real[k]: v for k, v in plan.files.items()}
     for k, uids in owners.items():
         if len(uids) > 1:
-            plan.conflicts.append(Conflict(real[k], uids[-1], uids[:-1]))
+            win = chosen.get(k, uids[-1])
+            plan.conflicts.append(Conflict(real[k], win, [u for u in uids if u != win], chosen=k in chosen))
     folders = [f for m in mods for f in m.folders]
     plan.generated = layout.generated(folders, {f for m in state.mods.values() for f in m.folders})
     if with_internal and layout.supports_internal_conflicts:

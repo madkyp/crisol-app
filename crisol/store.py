@@ -36,6 +36,8 @@ class ModRecord:
     packages: list[str] = field(default_factory=list)      # ME3: carpetas de paquete (en staging)
     natives: list[str] = field(default_factory=list)       # ME3: DLL nativas (en staging)
     savefile: str = ""                                     # ME3: partida aparte que pide el mod
+    overlays: list = field(default_factory=list)           # ajustes de una colección puestos sobre otros mods:
+                                                           # [ruta en este mod, uid del otro, ruta en el otro]
     me3_variants: list[str] = field(default_factory=list)  # ME3: perfiles .me3 que trae el mod y se pueden usar
     me3_variant: str = ""                                  # ME3: el elegido
     requirements: list[dict] = field(default_factory=list)
@@ -44,10 +46,20 @@ class ModRecord:
     staged_size: int = 0         # bytes que ocupa el mod extraído
     fomod_name: str = ""         # el mod tiene instalador FOMOD
     fomod_choice: list = field(default_factory=list)  # opciones elegidas (para reinstalar/actualizar)
+    note: str = ""               # nota del usuario
 
     @property
     def update_available(self) -> bool:
-        return bool(self.latest_version) and bool(self.version) and _vkey(self.latest_version) != _vkey(self.version)
+        if not self.latest_version or not self.version or _vkey(self.latest_version) == _vkey(self.version):
+            return False
+        new, cur = _vnums(self.latest_version), _vnums(self.version)
+        # Con números se compara de verdad (la página del mod puede ir por detrás del archivo: 2.0.0 < 2.0.1).
+        return new > cur if new and cur else True
+
+
+def _vnums(v: str) -> tuple[int, ...]:
+    import re
+    return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
 def _vkey(v: str) -> str:
@@ -58,6 +70,7 @@ def _vkey(v: str) -> str:
 class Profile:
     order: list[str] = field(default_factory=list)     # uids, el primero se carga antes
     enabled: list[str] = field(default_factory=list)
+    overrides: dict[str, str] = field(default_factory=dict)   # archivo (en minúsculas) → uid que lo pone, sea cual sea el orden
 
 
 class GameState:
@@ -79,6 +92,7 @@ class GameState:
         self.dirty_deploy: bool = bool(raw.get("dirty_deploy"))
         self.updates_checked: float = float(raw.get("updates_checked") or 0)
         self.me3_opts: dict = raw.get("me3_opts") or {}
+        self.applied_build: str = raw.get("applied_build") or ""   # versión del juego al aplicar los mods
         self._repair()
 
     def _repair(self) -> None:
@@ -88,6 +102,7 @@ class GameState:
             p.order = [u for u in p.order if u in self.mods and not (u in seen or seen.add(u))]
             p.order += [u for u in self.mods if u not in seen]
             p.enabled = [u for u in p.enabled if u in self.mods]
+            p.overrides = {t: u for t, u in p.overrides.items() if u in self.mods}
 
     def save(self) -> None:
         jsonio.save(self.path, {
@@ -95,7 +110,7 @@ class GameState:
             "mods": {u: asdict(m) for u, m in self.mods.items()},
             "profiles": {n: asdict(p) for n, p in self.profiles.items()},
             "active": self.active, "dirty_deploy": self.dirty_deploy, "updates_checked": self.updates_checked,
-            "me3_opts": self.me3_opts,
+            "me3_opts": self.me3_opts, "applied_build": self.applied_build,
         })
 
     # ---------- mods ----------
@@ -137,10 +152,13 @@ class GameState:
         self.dirty_deploy = True
 
     def remove(self, uid: str) -> None:
-        self.mods.pop(uid, None)
+        rec = self.mods.pop(uid, None)
+        if rec and rec.overlays:
+            undo_overlays(self, rec)
         for p in self.profiles.values():
             p.order = [u for u in p.order if u != uid]
             p.enabled = [u for u in p.enabled if u != uid]
+            p.overrides = {t: u for t, u in p.overrides.items() if u != uid}
         shutil.rmtree(self.staging(uid), ignore_errors=True)
         self.dirty_deploy = True
 
@@ -161,10 +179,19 @@ class GameState:
         o.insert(max(0, min(new_index, len(o))), uid)
         self.dirty_deploy = True
 
+    def set_override(self, target: str, uid: str | None) -> None:
+        """Que el archivo target lo ponga el mod uid (None: el que diga el orden)."""
+        if uid:
+            self.profile.overrides[target.lower()] = uid
+        else:
+            self.profile.overrides.pop(target.lower(), None)
+        self.dirty_deploy = True
+
     # ---------- perfiles ----------
     def add_profile(self, name: str, copy_from: str | None = None) -> None:
         src = self.profiles.get(copy_from or "")
-        self.profiles[name] = Profile(list(src.order), list(src.enabled)) if src else Profile(list(self.mods), [])
+        self.profiles[name] = (Profile(list(src.order), list(src.enabled), dict(src.overrides)) if src
+                               else Profile(list(self.mods), []))
         self._repair()
 
     def rename_profile(self, old: str, new: str) -> None:
@@ -183,3 +210,12 @@ class GameState:
         if name in self.profiles and name != self.active:
             self.active = name
             self.dirty_deploy = True
+
+
+def undo_overlays(st: GameState, rec: ModRecord) -> None:
+    """Devuelve a los otros mods los archivos originales que tapaban los ajustes de rec."""
+    orig = st.staging(rec.uid) / ".orig"
+    for _src, uid, rel in rec.overlays:
+        saved, target = orig / uid / rel, st.staging(uid) / rel
+        if saved.is_file() and target.parent.is_dir():
+            shutil.copy2(saved, target)

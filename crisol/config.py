@@ -12,6 +12,7 @@ class Config:
     language: str = ""           # "" = el del sistema, "es" o "en" (se aplica al reiniciar)
     show_all_games: bool = False
     show_adult: bool = False
+    notifications: bool = True   # avisos del escritorio (mod instalado, actualizaciones, juego actualizado…)
     keep_archives: bool = True   # guardar el archivo descargado (permite reinstalar sin volver a bajarlo)
     # Enlace juego → dominio de Nexus elegido o corregido a mano: {"steam:1771300": "kingdomcomedeliverance2"}
     nexus_domains: dict[str, str] = field(default_factory=dict)

@@ -82,6 +82,14 @@ class CollectionMod:
     version: str
     size: int
     optional: bool
+    kind: str = "nexus"            # "nexus" | "bundle" (incluido en la colección) | "external" (a mano)
+    fomod_options: list | None = None   # opciones FOMOD del autor de la colección
+    bundled: str = ""              # ruta dentro del archivo de la colección (kind == "bundle")
+    collection_archive: str = ""   # el .7z de la colección (para sacar lo incluido)
+    fomod_choice: list | None = None    # opciones FOMOD en el formato de Crisol (lista exportada)
+    loader: str = ""               # kind == "loader": clave de loaders.SPECS
+    url: str = ""                  # descarga externa
+    instructions: str = ""
 
 
 @dataclass

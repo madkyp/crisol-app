@@ -62,6 +62,39 @@ class PrefsDialog(Adw.PreferencesDialog):
         disk.add(keep)
         page.add(disk)
 
+        from .. import notify
+        notif = Adw.PreferencesGroup(title=_('Avisos'))
+        on = Adw.SwitchRow(title=_('Notificaciones del escritorio'),
+                           subtitle=_('Mod o colección instalados, mods con versión nueva y juegos actualizados '
+                                      'desde que aplicaste los mods'),
+                           active=self.ctl.cfg.notifications)
+        on.connect("notify::active", self._notifications)
+        notif.add(on)
+        bg = Adw.SwitchRow(title=_('Buscar actualizaciones con Crisol cerrado'),
+                           subtitle=_('Cada 12 horas (temporizador de systemd de tu usuario); avisa con una notificación'),
+                           active=notify.background_checks_on())
+        bg.connect("notify::active", self._background)
+        notif.add(bg)
+        page.add(notif)
+
+        from .. import backup
+        from .util import human_size
+        bk = Adw.PreferencesGroup(title=_('Copia de seguridad'),
+                                  description=_('Ajustes, perfiles, orden, notas y listas de mods de todos los juegos, '
+                                                'en un archivo pequeño. No lleva los mods (se vuelven a bajar) ni tu '
+                                                'API key.'))
+        self.with_saves = Adw.SwitchRow(title=_('Incluir las copias de partidas'),
+                                        subtitle=human_size(backup.saves_size()))
+        bk.add(self.with_saves)
+        for title, sub, cb in ((_('Crear copia…'), _('Guardar los datos de Crisol en un archivo'), self._backup),
+                               (_('Restaurar copia…'), _('Para un PC nuevo o tras reinstalar: no borra mods ni '
+                                                         'partidas'), self._restore)):
+            row = Adw.ActionRow(title=title, subtitle=sub, activatable=True)
+            row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+            row.connect("activated", lambda *_a, cb=cb: cb())
+            bk.add(row)
+        page.add(bk)
+
         look = Adw.PreferencesGroup(title=_('Apariencia'))
         colors = [c for _u, c in ACCENTS]
         sel = colors.index(self.ctl.cfg.accent) if self.ctl.cfg.accent in colors else 0
@@ -160,6 +193,91 @@ class PrefsDialog(Adw.PreferencesDialog):
         self.ctl.cfg.language = self._langs[row.get_selected()]
         self.ctl.cfg.save()
         self.add_toast(Adw.Toast(title=_("El idioma cambiará al volver a abrir Crisol")))
+
+    def _backup(self):
+        import time
+        from pathlib import Path
+        from gi.repository import Gio
+        from .. import backup
+        dlg = Gtk.FileDialog(title=_('Crear copia de seguridad'),
+                             initial_name=f"crisol-{time.strftime('%Y-%m-%d')}.tar.gz")
+        dlg.set_initial_folder(Gio.File.new_for_path(str(Path.home())))
+        win = self.win
+
+        def picked(d, res):
+            try:
+                path = Path(d.save_finish(res).get_path())
+            except GLib.Error:
+                return
+            run_async(backup.create, lambda m: self.add_toast(Adw.Toast(
+                title=_('Copia guardada: {0} juegos en {1}').format(len(m["games"]), path.name))),
+                lambda e: self.add_toast(Adw.Toast(title=str(e))), path, self.with_saves.get_active())
+        dlg.save(win, None, picked)
+
+    def _restore(self):
+        from pathlib import Path
+        from gi.repository import Gio
+        from .. import backup
+        dlg = Gtk.FileDialog(title=_('Restaurar copia de seguridad'))
+        f = Gtk.FileFilter(name=_('Copia de Crisol (.tar.gz)'))
+        f.add_pattern("*.tar.gz")
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(f)
+        dlg.set_filters(filters)
+        dlg.set_initial_folder(Gio.File.new_for_path(str(Path.home())))
+        win = self.win
+
+        def picked(d, res):
+            try:
+                path = Path(d.open_finish(res).get_path())
+                man = backup.read_manifest(path)
+            except GLib.Error:
+                return
+            except backup.BackupError as e:
+                self.add_toast(Adw.Toast(title=str(e)))
+                return
+            import time
+            ask = Adw.AlertDialog(heading=_('¿Restaurar la copia del {0}?').format(
+                time.strftime("%d/%m/%Y %H:%M", time.localtime(man.get("created") or 0))),
+                body=_('{0} juegos. Se sustituyen los ajustes y el estado de los juegos cuyos mods están en este PC; '
+                       'del resto se guarda la lista para importarla desde la página del juego. Antes se hace una '
+                       'copia de lo que hay ahora.').format(len(man.get("games") or [])))
+            ask.add_response("cancel", _('Cancelar'))
+            ask.add_response("restore", _('Restaurar'))
+            ask.set_response_appearance("restore", Adw.ResponseAppearance.SUGGESTED)
+            ask.connect("response", lambda _d, r: r == "restore" and self._do_restore(path))
+            ask.present(self)
+        dlg.open(win, None, picked)
+
+    def _do_restore(self, path):
+        from .. import backup, manager
+        from ..config import Config
+
+        def done(r):
+            manager._contexts.clear()        # el estado de los juegos ha cambiado en disco
+            self.ctl.cfg = Config.load()
+            self.win.refresh_library()
+            body = _('Juegos recuperados: {0}.').format(len(r.games))
+            if r.lists:
+                body += " " + _('En {0} juegos faltan los mods: abre cada uno y pulsa «Importar» en el aviso de '
+                                'arriba.').format(len(r.lists))
+            if r.saves:
+                body += " " + _('Copias de partidas añadidas: {0}.').format(r.saves)
+            d = Adw.AlertDialog(heading=_('Copia restaurada'), body=body)
+            d.add_response("ok", _('Aceptar'))
+            d.present(self)
+        run_async(backup.restore, done, lambda e: self.add_toast(Adw.Toast(title=str(e))), path)
+
+    def _notifications(self, row, _p):
+        self.ctl.cfg.notifications = row.get_active()
+        self.ctl.cfg.save()
+
+    def _background(self, row, _p):
+        from .. import notify
+        try:
+            notify.set_background_checks(row.get_active())
+        except OSError as e:
+            self.add_toast(Adw.Toast(title=str(e)))
 
     def _keep(self, row, _p):
         self.ctl.cfg.keep_archives = row.get_active()

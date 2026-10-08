@@ -25,11 +25,28 @@ _JUNK_DIRS = {"fomod", "__macosx"}
 _DOC_EXTS = {".txt", ".md", ".pdf", ".url", ".html", ".htm", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".rtf"}
 _PAK_EXTS = {".pak", ".ucas", ".utoc", ".sig"}
 # DLL de proxy con las que se cargan los cargadores de mods (BepInEx, UE4SS, ASI…).
-_PROXY_DLLS = {"winhttp.dll", "version.dll", "dinput8.dll", "dxgi.dll", "d3d11.dll", "dsound.dll", "winmm.dll"}
+_PROXY_DLLS = {"winhttp.dll", "version.dll", "dinput8.dll", "dxgi.dll", "d3d11.dll", "dsound.dll", "winmm.dll",
+                "dwmapi.dll", "xinput1_3.dll"}
 
 
 class LayoutError(Exception):
     pass
+
+
+class NotNeeded(LayoutError):
+    """El mod es algo que este tipo de juego ya resuelve por sí mismo (p. ej. otro cargador con ME3)."""
+
+
+# Lo que Mod Engine 3 ya hace por sí mismo: otros cargadores y el arranque sin anticheat.
+ME3_REDUNDANT_FILES = {"dinput8.dll", "modengine2_launcher.exe", "modengine2.dll", "toggle_anti_cheat.exe",
+                       "start_game_in_offline_mode.exe", "launchmod_eldenring.bat"}
+ME3_REDUNDANT_NAMES = ("mod loader", "mod engine 2", "modengine2", "anti-cheat toggler", "anticheat toggler",
+                       "toggle anti-cheat", "toggleanticheat", "offline launcher")
+
+
+def me3_redundant(name: str) -> bool:
+    n = name.lower()
+    return any(k in n for k in ME3_REDUNDANT_NAMES)
 
 
 @dataclass
@@ -64,7 +81,8 @@ def _is_doc(rel: str) -> bool:
     return PurePosixPath(rel).suffix.lower() in _DOC_EXTS
 
 
-def _anchor(staged: Path, files: list[str], game_dir: Path, anchors: list[str]) -> tuple[str, str] | None:
+def _anchor(staged: Path, files: list[str], game_dir: Path, anchors: list[str],
+            ignore: set | None = None) -> tuple[str, str] | None:
     """Busca qué carpeta del archivo corresponde a qué carpeta del juego.
 
     Se elige la pareja (carpeta del archivo, carpeta ancla del juego) con más nombres en común en
@@ -78,6 +96,9 @@ def _anchor(staged: Path, files: list[str], game_dir: Path, anchors: list[str]) 
     best: tuple[int, int, str, str] | None = None
     for a in anchors:
         game_names = _children(game_dir / a) if a else _children(game_dir)
+        if ignore:  # lo que puso Crisol en esa carpeta no cuenta como del juego
+            game_names -= {PurePosixPath(i).name for i in ignore if str(PurePosixPath(i).parent).lower()
+                           in ((a.lower() if a else "."), )}
         if not game_names:
             continue
         for d in dirs:
@@ -120,6 +141,7 @@ class Loader:
     url: str = ""
     engine: str = ""        # motor detectado, para mostrarlo
     search: tuple = ()      # nombres con los que buscarlo en Nexus
+    install_key: str = ""   # cargador oficial que Crisol puede instalar (loaders.SPECS)
 
     @property
     def needed(self) -> bool:
@@ -164,24 +186,42 @@ class Layout:
         files = staged_files(staged)
         if not files:
             raise LayoutError(_('El archivo del mod está vacío'))
-        found = _anchor(staged, files, self.game_dir, self.anchors)
+        found = _anchor(staged, files, self.game_dir, self.anchors, self.ignore_paths)
         if found:
             src_dir, game_rel = found
         else:
             src_dir, game_rel = _strip_wrappers(staged), self.default_dir()
+        # Sin carpeta que indique el destino: un archivo suelto que se llama igual que uno (y solo uno) del
+        # juego lo sustituye allí (p. ej. vídeos de intro en Content/Movies/Splash).
+        by_name = self._name_index() if not found else {}
         mapped, skipped = [], []
         for f in files:
             rel = _under(f, src_dir)
             if rel is None or (_is_doc(f) and "/" not in rel and not self.keep_docs):
                 skipped.append(f)  # fuera de la carpeta elegida, o un léeme suelto
                 continue
-            mapped.append((f, _join(game_rel, rel)))
+            same = by_name.get(PurePosixPath(rel).name.lower(), []) if "/" not in rel else []
+            mapped.append((f, same[0] if len(same) == 1 else _join(game_rel, rel)))
         if not mapped:
             raise LayoutError(_('No se ha encontrado nada que instalar en el archivo del mod'))
         return Mapping(mapped, skipped)
 
     def default_dir(self) -> str:
         return ""
+
+    ignore_paths: set = set()   # archivos que puso Crisol (no son del juego): los rellena el gestor
+
+    def _name_index(self) -> dict[str, list[str]]:
+        """Nombre de archivo (minúsculas) → rutas en el juego, sin contar lo que puso Crisol."""
+        out: dict[str, list[str]] = {}
+        for dirpath, dirnames, filenames in os.walk(self.game_dir):
+            dirnames[:] = [d for d in dirnames if d.lower() not in ("saved", "logs", "crashes")]
+            rel_dir = Path(dirpath).relative_to(self.game_dir).as_posix()
+            for fname in filenames:
+                rel = fname if rel_dir == "." else f"{rel_dir}/{fname}"
+                if rel.lower() not in self.ignore_paths:
+                    out.setdefault(fname.lower(), []).append(rel)
+        return out
 
     def target(self, dst: str, position: int) -> str:
         """Ruta final de un archivo según la posición del mod en el orden (1 = primero)."""
@@ -195,12 +235,17 @@ class Layout:
         """Rutas internas de un paquete (para conflictos dentro de .pak), si el formato lo permite."""
         return []
 
+    game_key = ""   # «steam:<appid>»: para saber si Gaming Deck ya tiene lo que hace falta
+
     def notes(self, deployed_targets: list[str]) -> list[str]:
-        names = {PurePosixPath(t).name.lower() for t in deployed_targets if "/" not in t}
+        # DLL de proxy junto al ejecutable: en la raíz o en <Proyecto>/Binaries/Win64 (Unreal)
+        names = {PurePosixPath(t).name.lower() for t in deployed_targets
+                 if "/" not in t or str(PurePosixPath(t).parent).lower().endswith("binaries/win64")}
         proxies = sorted(names & _PROXY_DLLS)
         if proxies:
-            ov = ",".join(f"{Path(p).stem}=n,b" for p in proxies)
-            return [_('Hay un cargador de mods ({0}). En Proton debe cargarse la DLL nativa: en Steam → Propiedades → Opciones de lanzamiento pon WINEDLLOVERRIDES="{1}" %command%').format(', '.join(proxies), ov)]
+            from .loaders import dll_override_hint
+            hint = dll_override_hint(proxies, self.game_key)
+            return [_('Hay un cargador de mods ({0}).').format(', '.join(proxies)) + " " + hint] if hint else []
         return []
 
     def loader(self, mods: list, staging) -> Loader | None:
@@ -233,16 +278,18 @@ class LooseLayout(Layout):
         bep = ("BepInEx" + (" 6 (IL2CPP)" if il2cpp else ""), "https://github.com/BepInEx/BepInEx/releases")
         if any(d.startswith("bepinex/plugins/") for d in dsts):
             return Loader(bep[0], "required", have_bep, _('Algún mod activo es un plugin de BepInEx.') + ("" if have_bep
-                          else _(' Instálalo como un mod más y ponlo el primero.')), bep[1], engine, ("BepInEx",))
+                          else _(' Instálalo como un mod más y ponlo el primero.')), bep[1], engine, ("BepInEx",),
+                          "bepinex6-il2cpp" if il2cpp else "bepinex5")
         if any(d.startswith("mods/") and d.endswith(".dll") for d in dsts):
             return Loader("MelonLoader", "required", have_melon, _('Algún mod activo es de MelonLoader.') + (
                           "" if have_melon else _(' Instálalo como un mod más y ponlo el primero.')),
-                          "https://github.com/LavaGang/MelonLoader/releases", engine, ("MelonLoader",))
+                          "https://github.com/LavaGang/MelonLoader/releases", engine, ("MelonLoader",), "melonloader")
         if engine:
             name = "BepInEx" if have_bep else "MelonLoader" if have_melon else _('BepInEx o MelonLoader')
             return Loader(name, "optional", have_bep or have_melon,
                           _('Juego {0}. Los mods de archivos (texturas, ajustes) no necesitan cargador; los plugins (.dll) necesitan BepInEx o MelonLoader según el mod: míralo en sus requisitos.').format(engine),
-                          bep[1], engine, ("BepInEx", "MelonLoader"))
+                          bep[1], engine, ("BepInEx", "MelonLoader"),
+                          "" if (have_bep or have_melon) else ("bepinex6-il2cpp" if il2cpp else "bepinex5"))
         return Loader(_('Ninguno conocido'), "none", False,
                       _('No se ha detectado un motor con cargador habitual: los mods se copian tal cual. Si un mod pide un cargador, aparecerá en sus requisitos.'), "", "", ("Mod Loader", "Script Extender"))
 
@@ -285,12 +332,31 @@ class UnrealLayout(Layout):
             sub = "LogicMods" if "/logicmods/" in f"/{f.lower()}" else "~mods"
             mapped.append((f, _join(self.paks_dir(), sub, PurePosixPath(f).name)))
         skipped: list[str] = []
+        # UE4SS (dwmapi.dll/UE4SS.dll/xinput1_3.dll o carpeta ue4ss/): todo lo de su carpeta va a Binaries/Win64,
+        # salvo que el mod ya traiga la ruta «…/Binaries/Win64» (entonces lo coloca el ancla de abajo).
+        loader_dir = None
+        for f in rest:
+            parts = PurePosixPath(f).parts
+            if parts[-1].lower() in ("dwmapi.dll", "ue4ss.dll", "xinput1_3.dll"):
+                loader_dir = "/".join(parts[:-1])
+                break
+            low = [x.lower() for x in parts[:-1]]
+            if "ue4ss" in low:
+                loader_dir = "/".join(parts[:low.index("ue4ss")])
+                break
+        if loader_dir is not None and self.project and not loader_dir.lower().endswith("binaries/win64"):
+            win64 = _join(self.project, "Binaries/Win64")
+            for f in list(rest):
+                rel = _under(f, loader_dir)
+                if rel is not None and not (_is_doc(f) and "/" not in rel):
+                    mapped.append((f, _join(win64, rel)))
+                    rest.remove(f)
         if rest:
             try:
                 tmp = Layout.map_files(self, staged, mod_name)
-                pakset = set(paks)
-                mapped += [m for m in tmp.files if m[0] not in pakset]
-                skipped += [s for s in tmp.skipped if s not in pakset]
+                done = set(paks) | {m[0] for m in mapped}
+                mapped += [m for m in tmp.files if m[0] not in done]
+                skipped += [s for s in tmp.skipped if s not in done]
             except LayoutError:
                 if not paks:
                     raise
@@ -307,11 +373,32 @@ class UnrealLayout(Layout):
         have = _children(win64)
         ok = bool({"ue4ss.dll", "ue4ss"} & have) or any(d.endswith(("/ue4ss.dll", "/dwmapi.dll")) for d in dsts)
         url = "https://github.com/UE4SS-RE/RE-UE4SS/releases"
+        failed = self.ue4ss_failed(win64)
+        if ok and failed:
+            # Instalado pero no arranca (p. ej. le faltan las firmas del juego): no cuenta como instalado.
+            return Loader("UE4SS", "required" if needs else "optional", False,
+                          _("UE4SS está instalado pero no ha podido arrancar en este juego ({0}). Suele faltar una "
+                            "configuración propia del juego: desinstálalo y usa la versión de Nexus hecha para "
+                            "este juego.").format(failed), url, "Unreal Engine", ("UE4SS",))
         if needs:
             return Loader("UE4SS", "required", ok, _('Algún mod activo usa scripts o LogicMods de UE4SS.') + ("" if ok
                           else _(' Instálalo como un mod más (suele estar en la página del juego en Nexus).')),
-                          url, "Unreal Engine", ("UE4SS",))
-        return Loader("UE4SS", "optional", ok, _('Unreal Engine: los mods .pak no necesitan cargador; los de scripts (Lua) o LogicMods necesitan UE4SS.'), url, "Unreal Engine", ("UE4SS",))
+                          url, "Unreal Engine", ("UE4SS",), "ue4ss")
+        return Loader("UE4SS", "optional", ok, _('Unreal Engine: los mods .pak no necesitan cargador; los de scripts (Lua) o LogicMods necesitan UE4SS.'), url, "Unreal Engine", ("UE4SS",), "ue4ss")
+
+    @staticmethod
+    def ue4ss_failed(win64: Path) -> str:
+        """El último error fatal del registro de UE4SS de la última partida, o «»."""
+        # UE4SS 3.x escribe en Win64/ o en Win64/ue4ss/ según la versión: vale el de la última partida.
+        logs = [p for d in (win64, win64 / "ue4ss") if d.is_dir() for p in d.glob("*")
+                if p.name.lower() == "ue4ss.log"] if win64.is_dir() else []
+        log = max(logs, key=lambda p: p.stat().st_mtime) if logs else None
+        try:
+            lines = log.read_text(errors="replace").splitlines()[-40:] if log else []
+        except OSError:
+            return ""
+        fatal = [ln.split("Fatal Error:", 1)[1].strip() for ln in lines if "Fatal Error:" in ln]
+        return fatal[-1] if fatal else ""
 
     def target(self, dst, position):
         p = PurePosixPath(dst)
@@ -448,6 +535,10 @@ class ME3Layout(Layout):
                        and "/me3/" not in f"/{f.lower()}"
                        # DLL de proxy (p. ej. _winhttp.dll de otros cargadores): no son mods de ME3
                        and PurePosixPath(f).name.lower().lstrip("_") not in _PROXY_DLLS]
+        if not packages and not natives and (
+                {PurePosixPath(f).name.lower() for f in files} & ME3_REDUNDANT_FILES or me3_redundant(mod_name)):
+            raise NotNeeded(_("Es otro cargador o un lanzador sin anticheat y con Mod Engine 3 no hace falta: ME3 ya "
+                              "carga los mods (también las DLL de Elden Mod Loader) y arranca el juego sin anticheat."))
         if not packages and not natives:
             raise LayoutError(_('No parece un mod para Mod Engine 3: no trae perfil .me3, ni carpetas de recursos (param, map, chr…), ni DLL.'))
         mapped = []
@@ -499,6 +590,10 @@ class ME3Layout(Layout):
         found = _sh.which("me3")
         if found:
             return Path(found)
+        from .loaders import me3_tool
+        tool = me3_tool()  # instalado desde GitHub con «Instalar»
+        if tool:
+            return tool
         for d in staging_dirs:
             for cand in d.glob("**/me3/Linux/me3") if d.is_dir() else []:
                 if (cand.parent / "win64").is_dir():
@@ -524,9 +619,11 @@ class ME3Layout(Layout):
 
     def loader(self, mods, staging):
         me3 = self.find_me3([staging(m.uid) for m in mods])
-        return Loader("Mod Engine 3 (ME3)", "required", me3 is not None,
-                      _('Se usa {0}').format(me3) if me3 else _('Hace falta ME3 para cargar los mods. Algunos mods lo traen (The Convergence); si no, descárgalo de su página de versiones en GitHub (incluye la de Linux).'),
-                      "https://github.com/garyttierney/me3/releases", "FromSoftware", ("Mod Engine 3", "ME3"))
+        source = next((m.name for m in mods if me3 and str(me3).startswith(str(staging(m.uid)) + "/")), "")
+        detail = (_('Se usa {0}').format(me3) + (" " + _("(viene con «{0}»)").format(source) if source else "")
+                  if me3 else _('Hace falta ME3 para cargar los mods. Algunos mods lo traen (The Convergence); si no, descárgalo de su página de versiones en GitHub (incluye la de Linux).'))
+        return Loader("Mod Engine 3 (ME3)", "required", me3 is not None, detail,
+                      "https://github.com/garyttierney/me3/releases", "FromSoftware", ("Mod Engine 3", "ME3"), "me3")
 
 
 def ci_dir(root: Path, rel: str) -> Path | None:

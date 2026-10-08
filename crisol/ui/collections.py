@@ -54,7 +54,7 @@ class CollectionDialog(Adw.Dialog):
         box.append(Gtk.Label(label=info.name, xalign=0, wrap=True, css_classes=["title-1"]))
         meta = Gtk.Box(spacing=8)
         for t in (_('por {0}').format(info.author), _('revisión {0}').format(info.revision), _("{0} mods").format(info.mod_count), human_size(info.size),
-                  f"{human_count(info.downloads)} descargas"):
+                  _("{0} descargas").format(human_count(info.downloads))):
             meta.append(Gtk.Label(label=t, css_classes=["chip"]))
         box.append(meta)
         box.append(Gtk.Label(label=info.summary, xalign=0, wrap=True))
@@ -65,8 +65,9 @@ class CollectionDialog(Adw.Dialog):
         box.append(web)
         how = (_('Cuenta Premium: se descargan e instalan uno tras otro.') if page.ctl.is_premium else
                _('Sin Premium, Nexus pide pulsar «Slow download» en cada mod: Crisol abre la página de cada uno por turnos y pasa al siguiente en cuanto llega el enlace.'))
-        box.append(Gtk.Label(label=how + _(' Se instalan en el orden de la colección. Las opciones de los instaladores FOMOD las eliges tú (no se copian las del autor).'),
-                             xalign=0, wrap=True, css_classes=["dim-label", "caption"]))
+        self.how = Gtk.Label(label=how, xalign=0, wrap=True, css_classes=["dim-label", "caption"])
+        box.append(self.how)
+        self._how_base = how
         self.group = Adw.PreferencesGroup(title=_('Mods de la colección'))
         self.spinner = Adw.Spinner(height_request=32)
         self.group.add(self.spinner)
@@ -78,24 +79,84 @@ class CollectionDialog(Adw.Dialog):
         tv.set_content(Gtk.ScrolledWindow(child=box, hscrollbar_policy=Gtk.PolicyType.NEVER))
         self.set_child(tv)
         self.checks: list[tuple[Gtk.CheckButton, object]] = []
-        run_async(page.ctl.nexus.collection_mods, self._loaded, self._failed, self.domain, info.slug)
+        run_async(self._load, self._loaded, self._failed)
+
+    def _load(self):
+        """Lista de mods (rápida) y, si se puede, el manifiesto completo: orden del autor, sus reglas,
+        sus opciones FOMOD, lo incluido en la colección y lo que hay que bajar a mano."""
+        from .. import collection
+        from ..providers.base import CollectionMod
+        nexus = self.page.ctl.nexus
+        mods = nexus.collection_mods(self.domain, self.info.slug)
+        try:
+            man = collection.parse(collection.download(nexus, self.domain, self.info.slug))
+        except Exception as e:  # noqa: BLE001 — sin manifiesto se sigue con la lista básica
+            return mods, None, str(e)
+        sizes = {m.file_id: m for m in mods}
+        out = []
+        for it in collection.ordered(man):
+            if it.kind == "nexus" and it.mod_id:
+                base = sizes.get(it.file_id)
+                out.append(CollectionMod(it.mod_id, it.file_id, it.name, base.file_name if base else it.logical,
+                                         it.version, base.size if base else 0, it.optional,
+                                         fomod_options=it.choices))
+            elif it.kind == "bundle":
+                out.append(CollectionMod(0, 0, it.name, it.bundled, it.version, 0, it.optional, kind="bundle",
+                                         bundled=it.bundled, collection_archive=str(man.archive)))
+            else:
+                out.append(CollectionMod(0, 0, it.name, it.logical, it.version, 0, it.optional, kind="external",
+                                         url=it.url, instructions=it.instructions))
+        return out, man, ""
 
     def _failed(self, e):
         self.group.remove(self.spinner)
         self.group.add(Adw.ActionRow(title=_('No se pudo cargar la colección'), subtitle=GLib.markup_escape_text(str(e))))
 
-    def _loaded(self, mods):
+    def _loaded(self, res):
+        mods, man, err = res
         self.group.remove(self.spinner)
+        if man:
+            self.how.set_label(self._how_base + " " + _("Se instalan en el orden del autor (con sus reglas) y con las "
+                                                        "opciones de instalación que eligió él."))
+        else:
+            self.how.set_label(self._how_base + " " + _("Se instalan en el orden de la colección; las opciones de los "
+                                                        "instaladores las eliges tú.") + (f" ({err})" if err else ""))
+        from ..layouts import me3_redundant
         st = self.page.ctx.state
+        external = self.page.ctx.layout.external
         for m in mods:
             exact = st.find("nexus", m.mod_id, m.file_id)
             other = None if exact else st.find("nexus", m.mod_id)
+            redundant = external and me3_redundant(m.name)
             row = Adw.ActionRow(title=GLib.markup_escape_text(m.name),
                                 subtitle=GLib.markup_escape_text(" · ".join(x for x in (
-                                    m.file_name, f"v{m.version}" if m.version else "", human_size(m.size),
-                                    "opcional" if m.optional else "") if x)))
-            check = Gtk.CheckButton(valign=Gtk.Align.CENTER, active=not m.optional and not exact and not other)
-            if exact:
+                                    m.file_name, f"v{m.version}" if m.version else "",
+                                    human_size(m.size) if m.size else "", _("opcional") if m.optional else "",
+                                    _("con las opciones del autor") if m.fomod_options else "") if x)))
+            if m.kind == "external":
+                # Fuera de Nexus: no se puede bajar desde aquí. Se enseña dónde y cómo.
+                row.set_subtitle(GLib.markup_escape_text(_("Descarga externa: instálalo a mano con «Importar "
+                                                           "archivo…»") + (f" — {m.instructions}" if m.instructions else "")))
+                row.set_subtitle_lines(3)
+                if m.url:
+                    b = Gtk.Button(icon_name="adw-external-link-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                                   tooltip_text=m.url)
+                    b.connect("clicked", lambda *_a, u=m.url: Gtk.UriLauncher.new(u).launch(self.win, None, None))
+                    row.add_suffix(b)
+                row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
+                self.group.add(row)
+                continue
+            if m.kind == "bundle":
+                exact = next((r for r in st.mods.values() if r.file_name == f"bundle:{m.bundled}"), None)
+                other = None
+                row.add_suffix(Gtk.Label(label=_("Incluido en la colección"), css_classes=["chip"],
+                                         valign=Gtk.Align.CENTER))
+            check = Gtk.CheckButton(valign=Gtk.Align.CENTER,
+                                    active=not m.optional and not exact and not other and not redundant)
+            if redundant:
+                row.add_suffix(Gtk.Label(label=_("No hace falta con ME3"), css_classes=["chip"], valign=Gtk.Align.CENTER,
+                                         tooltip_text=_("Mod Engine 3 ya carga los mods y arranca el juego sin anticheat")))
+            elif exact:
                 check.set_sensitive(False)
                 row.add_suffix(Gtk.Label(label=_('Instalado'), css_classes=["chip", "success"], valign=Gtk.Align.CENTER))
             elif other:
@@ -114,6 +175,6 @@ class CollectionDialog(Adw.Dialog):
         self.install.set_sensitive(n > 0 and bool(self.page.ctl.nexus.api_key))
 
     def _install(self):
-        items = [m for c, m in self.checks if c.get_active()]
+        items = [m for c, m in self.checks if c.get_active() and m.kind != "external"]
         self.win.install_collection(self.page.game, self.domain, self.info.name, items)
         self.close()

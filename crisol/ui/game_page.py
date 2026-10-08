@@ -17,6 +17,7 @@ from ..layouts import LAYOUTS
 from ..providers.base import SORTS, ModInfo, SearchPage
 from ..store import ModRecord
 from .fomod_dialog import make_chooser
+from . import modlist_dialog
 from .util import human_count, human_size, load_remote, local_texture, placeholder, run_async
 from ..i18n import _
 
@@ -42,11 +43,17 @@ class GamePage(Adw.NavigationPage):
         menu.append(_('Ajustes del juego…'), "game.settings")
         menu.append(_('Abrir carpeta del juego'), "game.open-dir")
         menu.append(_('Abrir carpeta de descargas'), "game.open-downloads")
+        lists = Gio.Menu()
+        lists.append(_('Exportar lista de mods…'), "game.export-list")
+        lists.append(_('Importar lista de mods…'), "game.import-list")
+        menu.append_section(None, lists)
         hb.pack_end(Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu, tooltip_text=_('Más opciones')))
         tv.add_top_bar(hb)
         group = Gio.SimpleActionGroup()
         for name, cb in (("settings", self.show_settings), ("open-dir", lambda: _open(game.install_dir)),
-                         ("open-downloads", lambda: _open(Path.home() / ".local/share/crisol/downloads"))):
+                         ("open-downloads", lambda: _open(Path.home() / ".local/share/crisol/downloads")),
+                         ("export-list", lambda: modlist_dialog.export_dialog(self)),
+                         ("import-list", lambda: modlist_dialog.import_dialog(self))):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda *_a, cb=cb: cb())
             group.add_action(a)
@@ -55,9 +62,13 @@ class GamePage(Adw.NavigationPage):
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_start=28, margin_end=28,
                        margin_top=8, margin_bottom=24)
         body.append(self._build_hero())
+        self.update_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        body.append(self.update_box)
+        self.restored_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        body.append(self.restored_box)
         self.loader_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         body.append(self.loader_box)
-
+        self._update_checked = False
         self.stack = Adw.ViewStack(vexpand=True)
         self.stack.add_titled_with_icon(self._build_search(), "search", _('Buscar mods'), "system-search-symbolic")
         self.installed_page = self.stack.add_titled_with_icon(self._build_installed(), "installed", _('Instalados'),
@@ -382,7 +393,22 @@ class GamePage(Adw.NavigationPage):
         box.append(self.launch_box)
         self.notes = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(self.notes)
+        fbar = Gtk.Box(spacing=8)
+        self.filter_entry = Gtk.SearchEntry(placeholder_text=_('Filtrar instalados…'), hexpand=True)
+        self.filter_entry.connect("search-changed", lambda *_u: self._apply_filter())
+        fbar.append(self.filter_entry)
+        self._filters = [("all", _('Todos')), ("enabled", _('Activos')), ("disabled", _('Desactivados')),
+                         ("update", _('Con actualización')), ("conflict", _('Con conflictos')),
+                         ("missing", _('Les falta algo')), ("note", _('Con nota'))]
+        self.filter_kind = Gtk.DropDown.new_from_strings([n for _k, n in self._filters])
+        self.filter_kind.connect("notify::selected", lambda *_u: self._apply_filter())
+        fbar.append(self.filter_kind)
+        self.filter_count = Gtk.Label(css_classes=["dim-label", "caption"])
+        fbar.append(self.filter_count)
+        self.filter_bar = fbar
+        box.append(fbar)
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["load-order"])
+        self.list.set_filter_func(self._row_visible)
         self.list_empty = Adw.StatusPage(icon_name="folder-download-symbolic", title=_('Sin mods instalados'),
                                          description=_('Busca un mod en la pestaña «Buscar mods» o importa un archivo que ya tengas descargado.'))
         self.list_empty.add_css_class("compact")
@@ -412,10 +438,76 @@ class GamePage(Adw.NavigationPage):
         self.update_all.set_visible(bool(n_upd))
         self.update_all.set_label(_('Actualizar todo ({0})').format(n_upd))
         self._show_space()
+        self._show_game_update()
+        self._show_restored()
         self._show_loader()
         self._fill_list()
         self._update_hero()
         self._compute_conflicts()
+        self._load_endorsements()
+
+    def _show_restored(self) -> None:
+        """La copia de seguridad trajo la lista de este juego pero no sus mods: ofrecer importarla."""
+        from .. import backup
+        box = self.restored_box
+        while (c := box.get_first_child()):
+            box.remove(c)
+        data = backup.pending_list(self.game.safe_key)
+        if not data:
+            return
+        s = Gtk.Box(spacing=12, css_classes=["note-box"])
+        s.append(Gtk.Image.new_from_icon_name("document-revert-symbolic"))
+        s.append(Gtk.Label(label=_('La copia de seguridad trae tu lista de mods de este juego ({0} mods, perfil «{1}»).')
+                           .format(len(data["mods"]), data.get("profile") or "?"), xalign=0, wrap=True, hexpand=True))
+        imp = Gtk.Button(label=_('Importar'), css_classes=["suggested-action"], valign=Gtk.Align.CENTER)
+
+        def import_it(*_a):
+            from .modlist_dialog import ImportDialog
+            ImportDialog(self, data, on_import=lambda: (backup.drop_pending(self.game.safe_key),
+                                                        self._show_restored())).present(self.win)
+        imp.connect("clicked", import_it)
+        s.append(imp)
+        drop = Gtk.Button(label=_('Descartar'), css_classes=["flat"], valign=Gtk.Align.CENTER)
+        drop.connect("clicked", lambda *_a: (backup.drop_pending(self.game.safe_key), self._show_restored()))
+        s.append(drop)
+        box.append(s)
+
+    def _load_endorsements(self) -> None:
+        """Qué mods ha recomendado la cuenta (una vez por sesión; se comparte entre juegos)."""
+        ctl = self.ctl
+        if getattr(ctl, "endorsed", None) is None:
+            ctl.endorsed = {}
+        dom = self.ctx.state.nexus_domain
+        asked = getattr(ctl, "_endorsed_asked", set())
+        ctl._endorsed_asked = asked
+        ids = sorted({m.mod_id for m in self.ctx.state.mods.values() if m.provider == "nexus" and m.mod_id
+                      and m.game_domain == dom and (dom, m.mod_id) not in asked})
+        if not ctl.nexus.api_key or not dom or not ids:
+            return
+        asked.update((dom, i) for i in ids)   # una vez por sesión y mod
+
+        def done(data):
+            ctl.endorsed.update(data)
+            if any(v == "Endorsed" for v in data.values()):
+                self._fill_list(self._plan.conflicts if self._plan else None)
+
+        def fail(_e):
+            asked.difference_update((dom, i) for i in ids)
+        run_async(ctl.nexus.endorsements, done, fail, dom, ids)
+
+    def is_endorsed(self, m: ModRecord) -> bool:
+        return (getattr(self.ctl, "endorsed", None) or {}).get((m.game_domain, m.mod_id)) == "Endorsed"
+
+    def endorse(self, m: ModRecord, on: bool) -> None:
+        def done(status):
+            if getattr(self.ctl, "endorsed", None) is None:
+                self.ctl.endorsed = {}
+            self.ctl.endorsed[(m.game_domain, m.mod_id)] = status
+            self.win.toast(_('Has recomendado «{0}». ¡Gracias!').format(m.name) if on
+                           else _('Recomendación de «{0}» retirada').format(m.name))
+            self._fill_list(self._plan.conflicts if self._plan else None)
+        run_async(self.ctl.nexus.endorse, done, lambda e: self.win.error(_('Nexus Mods'), e),
+                  m.game_domain, m.mod_id, m.version, on)
 
     def _fill_list(self, conflicts: list[Conflict] | None = None) -> None:
         self.list.remove_all()
@@ -431,6 +523,29 @@ class GamePage(Adw.NavigationPage):
                                     self._missing.get(m.uid, [])))
         self.list_stack.set_visible_child_name("list" if st.mods else "empty")
         self.conflicts_box.set_visible(bool(st.mods))
+        self.filter_bar.set_visible(len(st.mods) > 1)
+        self._apply_filter()
+
+    def _row_visible(self, row) -> bool:
+        m = row.mod
+        kind = self._filters[self.filter_kind.get_selected()][0]
+        ok = {"all": True, "enabled": row.enabled, "disabled": not row.enabled, "update": m.update_available,
+              "conflict": bool(row.wins or row.loses), "missing": bool(row.missing), "note": bool(m.note)}[kind]
+        q = self.filter_entry.get_text().strip().lower()
+        if ok and q:
+            hay = " ".join((m.name, m.author, m.note, m.file_title, m.version, m.fomod_name)).lower()
+            ok = all(w in hay for w in q.split())
+        return ok
+
+    def _apply_filter(self) -> None:
+        self.list.invalidate_filter()
+        total = len(self.ctx.state.mods)
+        shown, child = 0, self.list.get_first_child()
+        while child:
+            if isinstance(child, ModRow) and self._row_visible(child):
+                shown += 1
+            child = child.get_next_sibling()
+        self.filter_count.set_label(_('{0} de {1}').format(shown, total) if shown != total else "")
 
     def _compute_conflicts(self) -> None:
         if not self.ctx.state.mods:
@@ -442,6 +557,26 @@ class GamePage(Adw.NavigationPage):
             self._fill_list(plan.conflicts)
             self._show_conflicts(plan)
         run_async(self.ctx.plan, done, lambda e: self.conflicts.set_subtitle(_('No se pudieron calcular: {0}').format(e)), True)
+
+    def _winner_picker(self, c: Conflict) -> Gtk.Widget:
+        """Desplegable: «según el orden» o el mod que debe poner este archivo."""
+        mods = self.ctx.state.mods
+        owners = [u for u in self.ctx.state.profile.order if u == c.winner or u in c.losers]
+        by_order = owners[-1]
+        names = [_('Según el orden ({0})').format(mods[by_order].name)] + [mods[u].name for u in owners]
+        dd = Gtk.DropDown.new_from_strings(names)
+        dd.set_valign(Gtk.Align.CENTER)
+        dd.set_tooltip_text(_('Qué mod pone este archivo'))
+        dd.set_selected(owners.index(c.winner) + 1 if c.chosen else 0)
+        if c.chosen:
+            dd.add_css_class("accent")
+
+        def changed(d, _p):
+            i = d.get_selected()
+            self.ctx.state.set_override(c.target, owners[i - 1] if i > 0 else None)
+            GLib.idle_add(lambda: (self.changed(), False)[1])   # se repinta la lista que contiene este desplegable
+        dd.connect("notify::selected", changed)
+        return dd
 
     def _show_conflicts(self, plan: Plan) -> None:
         # Vaciar filas previas del expander.
@@ -459,7 +594,9 @@ class GamePage(Adw.NavigationPage):
                 parts.append(_("{0} archivos en conflicto").format(len(files)))
             if internal:
                 parts.append(f"{len(internal)} entradas repetidas dentro de paquetes .pak")
-            self.conflicts.set_subtitle(" · ".join(parts) + _('. Cambia el orden para decidir cuál gana.'))
+            self.conflicts.set_subtitle(" · ".join(parts) + (
+                _('. Cambia el orden para decidir cuál gana.') if self.ctx.layout.external
+                else _('. Cambia el orden o elige qué mod gana en cada archivo.')))
         for c in plan.conflicts[:300]:
             row = Adw.ActionRow(title=GLib.markup_escape_text(c.target),
                                 subtitle=GLib.markup_escape_text(
@@ -467,6 +604,8 @@ class GamePage(Adw.NavigationPage):
                                     + ", ".join(f"«{mods[u].name}»" for u in c.losers)
                                     + (_(' (dentro de .pak)') if c.internal else "")))
             row.set_subtitle_lines(2)
+            if not c.internal and not self.ctx.layout.external:
+                row.add_suffix(self._winner_picker(c))
             self.conflicts.add_row(row)
             self._conflict_rows.append(row)
         if len(plan.conflicts) > 300:
@@ -484,6 +623,36 @@ class GamePage(Adw.NavigationPage):
             b.append(Gtk.Image.new_from_icon_name("dialog-information-symbolic"))
             b.append(Gtk.Label(label=n, xalign=0, wrap=True, selectable=True, hexpand=True))
             self.notes.append(b)
+
+    def _show_game_update(self) -> None:
+        """Aviso si Steam ha actualizado el juego después de aplicar los mods: es lo que más suele romperlos."""
+        import time as _t
+        _clear(self.update_box)
+        if not self.ctx.game_updated():
+            return
+        g, st = self.game, self.ctx.state
+        when = _t.strftime("%d/%m/%Y", _t.localtime(g.updated_at)) if g.updated_at else "?"
+        b = Gtk.Box(spacing=12, css_classes=["note-box", "warn-box"])
+        b.append(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+        col.append(Gtk.Label(label=_("El juego se ha actualizado desde que aplicaste los mods"), xalign=0,
+                             css_classes=["heading"]))
+        col.append(Gtk.Label(label=_("Steam lo actualizó el {0} (versión {1} → {2}). Algunos mods pueden dejar de "
+                                     "funcionar hasta que sus autores los actualicen: revisa si hay versiones nuevas "
+                                     "y, si el juego falla, desactiva los mods sospechosos.").format(
+                                         when, st.applied_build, g.build),
+                             xalign=0, wrap=True, css_classes=["caption"]))
+        b.append(col)
+        chk = Gtk.Button(label=_("Buscar actualizaciones de mods"), valign=Gtk.Align.CENTER, css_classes=["pill"])
+        chk.connect("clicked", lambda *_u: self.check_updates())
+        ok = Gtk.Button(label=_("Ya lo he revisado"), valign=Gtk.Align.CENTER, css_classes=["pill", "flat"])
+        ok.connect("clicked", lambda *_u: (self.ctx.mark_build(), self.refresh_installed(), self.win.refresh_library()))
+        b.append(chk)
+        b.append(ok)
+        self.update_box.append(b)
+        if not self._update_checked and self.ctl.nexus and any(m.provider == "nexus" for m in st.mods.values()):
+            self._update_checked = True  # una vez por página: ¿han sacado los autores versiones nuevas?
+            run_async(manager.check_updates, lambda _n: self.refresh_installed(), None, self.ctx, self.ctl.nexus)
 
     def _show_space(self) -> None:
         if not self.ctx.state.mods:
@@ -539,7 +708,14 @@ class GamePage(Adw.NavigationPage):
         self.loader_links = Gtk.Box(spacing=6)
         col.append(self.loader_links)
         b.append(col)
-        if ld.url and not ld.installed and ld.level != "none":
+        if ld.install_key and not ld.installed and ld.level != "none":
+            from ..loaders import SPECS
+            inst = Gtk.Button(label=_("Instalar {0}").format(SPECS[ld.install_key].name), valign=Gtk.Align.CENTER,
+                              css_classes=["pill", "suggested-action"] if ld.level == "required" else ["pill"],
+                              tooltip_text=_("Desde su página oficial de GitHub"))
+            inst.connect("clicked", lambda *_u: self.install_loader(ld.install_key))
+            b.append(inst)
+        elif ld.url and not ld.installed and ld.level != "none":
             link = Gtk.Button(label=_('Web oficial'), valign=Gtk.Align.CENTER, css_classes=["pill"])
             link.connect("clicked", lambda *_u: Gtk.UriLauncher.new(ld.url).launch(self.win, None, None))
             b.append(link)
@@ -557,7 +733,15 @@ class GamePage(Adw.NavigationPage):
                     self.loader_links.append(btn)
             run_async(self.ctl.nexus.find_loaders, done, None, dom, ld.search)
         cmd = manager.me3_command(self.ctx)
-        if cmd:
+        if cmd and self.game.source == "steam" and manager.deck_launches_me3():
+            # Gaming Deck pide la orden de ME3 a Crisol al lanzar: no hay que tocar las opciones de Steam.
+            s = Gtk.Box(spacing=12, css_classes=["note-box"])
+            s.append(Gtk.Image.new_from_icon_name("emblem-ok-symbolic"))
+            s.append(Gtk.Label(label=_('Gaming Deck arranca el juego con ME3 y los mods activos. En Steam basta con '
+                                       'tener «gaming-deck run %command%» en las opciones de lanzamiento.'),
+                               xalign=0, wrap=True, hexpand=True))
+            self.launch_box.append(s)
+        elif cmd:
             # Para lanzar desde Steam: la orden de ME3 sustituye a la del juego («# %command%» la anula).
             line = " ".join(f'"{c}"' if " " in c else c for c in cmd) + " # %command%"
             s = Gtk.Box(spacing=12, css_classes=["note-box"])
@@ -574,8 +758,84 @@ class GamePage(Adw.NavigationPage):
             s.append(copy)
             self.launch_box.append(s)
 
+    def install_loader(self, key: str) -> None:
+        """Instalar el cargador oficial (GitHub), avisando de la versión hecha para el juego si Nexus la tiene."""
+        from .. import loaders
+        spec = loaders.SPECS[key]
+        dom = self.ctx.state.nexus_domain
+
+        def info():
+            rel = loaders.release(spec)
+            nexus = self.ctl.nexus.find_loaders(dom, (spec.name.split(" (")[0],)) if dom and key != "me3" else []
+            return rel, nexus
+
+        def show(res):
+            rel, nexus = res
+            body = _("Se descarga {0} {1} de su página oficial ({2}) y se instala {3}.").format(
+                spec.name, rel["tag"], f"github.com/{spec.repo}",
+                _("como herramienta de Crisol (no toca el juego)") if spec.dest == "tool"
+                else _("como un mod más, el primero de la lista (se puede desactivar o quitar)"))
+            if spec.note:
+                body += "\n\n" + spec.note
+            if nexus:
+                body += "\n\n" + _("En Nexus hay una versión para este juego: «{0}» ({1} descargas).").format(
+                    nexus[0].name, human_count(nexus[0].downloads))
+            d = Adw.AlertDialog(heading=_("¿Instalar {0}?").format(spec.name), body=body)
+            d.add_response("cancel", _('Cancelar'))
+            if nexus:
+                d.add_response("nexus", _("Ver la de Nexus"))
+            d.add_response("ok", _("Instalar desde GitHub"))
+            d.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+
+            def resp(_d, r):
+                if r == "nexus":
+                    self.open_mod(nexus[0])
+                elif r == "ok":
+                    self._do_install_loader(key)
+            d.connect("response", resp)
+            d.present(self.win)
+        run_async(info, show, lambda e: self.win.error(_("No se pudo consultar el cargador"), e))
+
+    def _do_install_loader(self, key: str) -> None:
+        from .. import loaders
+        spec = loaders.SPECS[key]
+        task = self.win.taskbar.add(_("Instalando {0}").format(spec.name))
+
+        def work():
+            if spec.dest != "tool":
+                manager.ensure_closed(self.ctx)
+            with manager.game_lock(self.game):
+                return loaders.install(self.ctx, key, task.update)
+
+        def done(_rec):
+            task.done()
+            hint = loaders.launch_hint(key, self.game.key)
+            msg = _("{0} instalado.").format(spec.name)
+            if spec.dest != "tool":
+                msg += " " + _("Pulsa «Aplicar mods» para llevarlo al juego.")
+            if hint:
+                msg += "\n\n" + hint
+            self.win.error(_("Cargador instalado"), msg)
+            self.changed()
+
+        def fail(e):
+            task.done()
+            self.win.error(_("No se pudo instalar {0}").format(spec.name), e)
+        run_async(work, done, fail)
+
     def play(self) -> None:
-        cmd = manager.me3_command(self.ctx)
+        if self.game.source == "steam" and manager.deck_launches_me3():
+            # A través de Steam: Steam Input configura el mando y Gaming Deck arranca ME3 con su perfil.
+            if not manager.me3_command(self.ctx):
+                self.win.error(_('Falta Mod Engine 3'), _('No se ha encontrado ME3. Instala un mod que lo traiga o descárgalo.'))
+                return
+            if self.ctx.state.dirty_deploy or not self.ctx.is_applied():
+                manager.apply(self.ctx)
+                self.changed()
+            Gtk.UriLauncher.new(f"steam://rungameid/{self.game.source_id}").launch(self.win, None, None)
+            self.win.toast(_("Lanzando con mods a través de Steam (el mando funciona con Steam Input)…"), 6)
+            return
+        cmd = manager.me3_command(self.ctx, for_launch=True)
         if not cmd:
             self.win.error(_('Falta Mod Engine 3'), _('No se ha encontrado ME3. Instala un mod que lo traiga o descárgalo.'))
             return
@@ -626,6 +886,26 @@ class GamePage(Adw.NavigationPage):
     def set_enabled(self, uid: str, on: bool) -> None:
         self.ctx.state.set_enabled(uid, on)
         self.changed()
+
+    def edit_note(self, m: ModRecord) -> None:
+        d = Adw.AlertDialog(heading=_('Nota de «{0}»').format(m.name),
+                            body=_('Para acordarte de algo: qué opción elegiste, por qué lo desactivaste…'))
+        entry = Gtk.Entry(text=m.note, activates_default=True, placeholder_text=_('Escribe una nota'))
+        d.set_extra_child(entry)
+        d.add_response("cancel", _('Cancelar'))
+        if m.note:
+            d.add_response("clear", _('Borrar nota'))
+            d.set_response_appearance("clear", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.add_response("save", _('Guardar'))
+        d.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("save")
+
+        def resp(_d, r):
+            if r in ("save", "clear"):
+                m.note = entry.get_text().strip() if r == "save" else ""
+                self.changed()
+        d.connect("response", resp)
+        d.present(self.win)
 
     def remove_mod(self, m: ModRecord) -> None:
         d = Adw.AlertDialog(heading=_('¿Desinstalar «{0}»?').format(m.name),
@@ -929,6 +1209,7 @@ class ModRow(Gtk.ListBoxRow):
                  missing: list[dict]):
         super().__init__(activatable=False)
         self.page, self.mod, self.index = page, m, index
+        self.enabled, self.wins, self.loses, self.missing = enabled, wins, loses, missing
         if not enabled:
             self.add_css_class("disabled-mod")
         box = Gtk.Box(spacing=12, margin_start=10, margin_end=10, margin_top=8, margin_bottom=8)
@@ -940,7 +1221,7 @@ class ModRow(Gtk.ListBoxRow):
         box.append(Gtk.Label(label=str(index + 1), css_classes=["order-pos"], xalign=1))
         thumb = Gtk.Picture(content_fit=Gtk.ContentFit.COVER, width_request=64, height_request=40)
         tf = Gtk.Box(overflow=Gtk.Overflow.HIDDEN, css_classes=["row-thumb"], width_request=64, height_request=40,
-                     valign=Gtk.Align.CENTER)
+                     valign=Gtk.Align.CENTER, hexpand=False)   # el icono de relleno no debe estirarla
         if m.thumbnail:
             tf.append(thumb)
             load_remote(thumb, m.thumbnail, 64, 40)
@@ -954,7 +1235,7 @@ class ModRow(Gtk.ListBoxRow):
         meta = Gtk.Box(spacing=6)
         sub = " · ".join(x for x in (f"v{m.version}" if m.version else "", m.author,
                                      "Nexus" if m.provider == "nexus" else "Importado a mano",
-                                     _("{0} archivos").format(len(m.files)),
+                                     _("{0} archivos").format(len(m.files) + len(m.natives)),
                                      human_size(m.staged_size) if m.staged_size else "") if x)
         meta.append(Gtk.Label(label=sub, xalign=0, css_classes=["dim-label", "caption"],
                               ellipsize=Pango.EllipsizeMode.END))
@@ -972,10 +1253,18 @@ class ModRow(Gtk.ListBoxRow):
             meta.append(Gtk.Label(label=_('Faltan requisitos') if internal else _('Requisitos externos'),
                                   css_classes=["chip", "error" if internal else "warning"],
                                   tooltip_text=_('Necesita: {0}').format(names)))
+        if m.provider == "nexus" and page.is_endorsed(m):
+            meta.append(Gtk.Image(icon_name="starred-symbolic", tooltip_text=_('Lo has recomendado en Nexus Mods'),
+                                  css_classes=["accent"]))
         if m.verified == "md5":
             meta.append(Gtk.Image(icon_name="emblem-ok-symbolic", tooltip_text=_('Descarga verificada con md5'),
                                   css_classes=["dim-label"]))
         col.append(meta)
+        if m.note:
+            nb = Gtk.Box(spacing=6, css_classes=["dim-label"])
+            nb.append(Gtk.Image.new_from_icon_name("document-edit-symbolic"))
+            nb.append(Gtk.Label(label=m.note, xalign=0, wrap=True, css_classes=["caption"], hexpand=True))
+            col.append(nb)
         box.append(col)
         sw = Gtk.Switch(active=enabled, valign=Gtk.Align.CENTER, tooltip_text=_('Activar o desactivar'))
         sw.connect("notify::active", lambda s, _p: page.set_enabled(m.uid, s.get_active()))
@@ -994,6 +1283,10 @@ class ModRow(Gtk.ListBoxRow):
             menu.append(_('Borrar archivo descargado ({0})').format(human_size(manager.archive_size(m))), "row.delete-archive")
         if m.mod_id:
             menu.append(_('Ver en Nexus Mods'), "row.page")
+        if m.provider == "nexus" and m.mod_id and page.ctl.nexus.api_key:
+            menu.append(_('Quitar recomendación en Nexus') if page.is_endorsed(m)
+                        else _('Recomendar en Nexus Mods (endorse)'), "row.endorse")
+        menu.append(_('Editar nota…') if m.note else _('Añadir nota…'), "row.note")
         menu.append(_('Desinstalar'), "row.remove")
         box.append(Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu, valign=Gtk.Align.CENTER,
                                   css_classes=["flat"]))
@@ -1008,6 +1301,8 @@ class ModRow(Gtk.ListBoxRow):
             "page": lambda: Gtk.UriLauncher.new(f"https://www.nexusmods.com/{m.game_domain}/mods/{m.mod_id}")
             .launch(page.win, None, None),
             "remove": lambda: page.remove_mod(m),
+            "note": lambda: page.edit_note(m),
+            "endorse": lambda: page.endorse(m, not page.is_endorsed(m)),
             "reinstall": lambda: page.reinstall_mod(m),
             "reconfigure": lambda: page.reinstall_mod(m, reconfigure=True),
             "delete-archive": lambda: page.delete_archive(m),

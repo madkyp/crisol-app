@@ -355,3 +355,33 @@ def choice_to_json(choice: Choice) -> list:
 
 def choice_from_json(data: list) -> Choice:
     return {(s, g): set(v) for s, g, v in data or []}
+
+
+def choice_from_collection(module: Module, options: list, game_dir: Path | None = None) -> Choice:
+    """Elección a partir de las opciones guardadas en una colección de Nexus (formato de Vortex):
+    [{name: paso, groups: [{name: grupo, choices: [{name: opción, idx: n}]}]}].
+
+    Se busca por nombre (y si no, por la posición «idx»); los pasos y grupos que la colección no menciona
+    quedan con la elección por defecto (obligatorias + recomendadas)."""
+    choice = default_choice(module, game_dir)
+    for opt in options or []:
+        step_name = (opt.get("name") or "").strip().lower()
+        for si, step in enumerate(module.steps):
+            if step.name.strip().lower() != step_name:
+                continue
+            for g in opt.get("groups") or []:
+                group_name = (g.get("name") or "").strip().lower()
+                for gi, group in enumerate(step.groups):
+                    if group.name.strip().lower() != group_name:
+                        continue
+                    picked = set()
+                    for c in g.get("choices") or []:
+                        names = [p.name.strip().lower() for p in group.plugins]
+                        cname = (c.get("name") or "").strip().lower()
+                        if cname in names:
+                            picked.add(names.index(cname))
+                        elif isinstance(c.get("idx"), int) and 0 <= c["idx"] < len(group.plugins):
+                            picked.add(c["idx"])
+                    choice[(si, gi)] = picked
+            break
+    return choice

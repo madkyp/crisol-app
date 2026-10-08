@@ -124,6 +124,10 @@ list.load-order > row.drop-below { box-shadow: inset 0 -3px 0 var(--accent-bg-co
 }
 .taskbar progressbar trough, .taskbar progressbar progress { min-height: 6px; border-radius: 3px; }
 
+.note-box.warn-box {
+  background: alpha(#ff9a4a, 0.10);
+  border-color: alpha(#ff9a4a, 0.45);
+}
 .note-box {
   border-radius: 12px;
   padding: 10px 14px;

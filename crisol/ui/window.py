@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 
 from gi.repository import Adw, Gio, GLib, Gtk, Pango
 
-from .. import APP_NAME, manager
+from .. import APP_NAME, manager, notify
 from ..controller import Controller
 from ..games import Game
+from ..layouts import NotNeeded
 from ..providers.base import ProviderError
 from ..providers.nexus import parse_nxm
 from .util import local_texture, placeholder, run_async
@@ -117,6 +119,9 @@ class GameCard(Gtk.Box):
         meta.append(Gtk.Label(label="Steam" if game.source == "steam" else "Umbral", css_classes=["chip", game.source]))
         if not ctl.compatible(game):
             meta.append(Gtk.Label(label=_('Sin Nexus'), css_classes=["chip"]))
+        if manager.context(game).game_updated():
+            meta.append(Gtk.Label(label="⚠", css_classes=["chip", "warning"],
+                                  tooltip_text=_("El juego se ha actualizado desde que aplicaste los mods")))
         if n:  # abajo, no sobre la portada: así no tapa el logo del juego
             meta.append(Gtk.Label(label=_("{0}/{1} mods").format(len(st.profile.enabled), n),
                                   css_classes=["chip", "accent"]))
@@ -267,6 +272,7 @@ class MainWindow(Adw.ApplicationWindow):
         def done(_games):
             self._scanned = True
             self.library.populate()
+            self._notify_game_updates()
             self._auto_check_updates()
             g = next((g for g in self.ctl.games if g.key == self._open_game), None)
             if g:
@@ -312,6 +318,15 @@ class MainWindow(Adw.ApplicationWindow):
             self.error(_("No se pudo instalar la versión nueva"), e)
         run_async(work, done, fail)
 
+    def _notify_game_updates(self) -> None:
+        """Juegos que Steam ha actualizado desde que se aplicaron los mods (un aviso por versión del juego)."""
+        for g in self.ctl.games:
+            ctx = manager.context(g)
+            if ctx.state.mods and ctx.game_updated():
+                notify.send(_("{0} se ha actualizado").format(g.name),
+                            _("Comprueba que los mods siguen funcionando; si no, busca sus versiones nuevas."),
+                            key=f"build-{g.key}", game_key=g.key, once=(f"build:{g.key}", str(g.build)))
+
     def _auto_check_updates(self) -> None:
         """Al arrancar, como mucho cada 12 h por juego: ¿hay versiones nuevas de los mods instalados?"""
         import time
@@ -324,9 +339,15 @@ class MainWindow(Adw.ApplicationWindow):
             total = 0
             for g in stale:
                 try:
-                    total += manager.check_updates(manager.context(g), self.ctl.nexus)
+                    n = manager.check_updates(manager.context(g), self.ctl.nexus)
                 except Exception as e:  # noqa: BLE001 — sin red no pasa nada, se reintenta otro día
                     log.info("no se pudieron comprobar actualizaciones de %s: %s", g.name, e)
+                    continue
+                total += n
+                if n:
+                    from ..app import notify_updates
+                    notify_updates(g.key, g.name, [m.name for m in manager.context(g).state.mods.values()
+                                                   if m.update_available])
             return total
 
         def done(total):
@@ -414,11 +435,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         def work():
             with manager.game_lock(game):
-                from .fomod_dialog import make_chooser
                 return manager.install_from_nxm(ctx, self.ctl.nexus, link, task.update, task.cancel,
-                                                chooser=make_chooser(self, game.install_dir))
+                                                chooser=chooser)
 
         in_queue = bool(self._queue) and self._queue_key() == (link.domain, link.mod_id, link.file_id)
+        chooser = self._chooser(game, self._queue["items"][self._queue["index"]] if in_queue else None)
 
         def done(rec):
             task.done()
@@ -426,6 +447,8 @@ class MainWindow(Adw.ApplicationWindow):
                 manager.delete_archive(ctx, rec.uid)
             if not in_queue:
                 self.toast(_('«{0}» instalado. Pulsa «Aplicar» para llevarlo al juego.').format(rec.name), 6)
+                notify.send(_("Mod instalado"), _("{0}: «{1}»").format(game.name, rec.name),
+                            key=f"install-{game.key}", game_key=game.key)
             page = self.current_game_page(game)
             if page:
                 page.refresh_installed()
@@ -436,8 +459,17 @@ class MainWindow(Adw.ApplicationWindow):
         def fail(e):
             task.done()
             if in_queue:
-                self.error(_('Colección «{0}» detenida').format(self._queue['name']), e)
-                self._queue = None
+                if task.cancel.is_set():
+                    self.toast(_('Instalación de la colección «{0}» detenida').format(self._queue['name']))
+                    self._queue = None
+                    return
+                # Un mod que falla no para la colección: se anota y se sigue con el siguiente.
+                it = self._queue["items"][self._queue["index"]]
+                self._queue["failed"].append((it.name, str(e), isinstance(e, NotNeeded)))
+                self._queue_next(advance=True)
+                return
+            if isinstance(e, NotNeeded):
+                self.error(_("No hace falta instalarlo"), e)
                 return
             if isinstance(e, manager.InstallCancelled):
                 self.toast(_('Instalación cancelada'))
@@ -448,15 +480,20 @@ class MainWindow(Adw.ApplicationWindow):
         run_async(work, done, fail)
 
     # ---------- colecciones: instalar varios mods en orden ----------
-    def install_collection(self, game: Game, domain: str, name: str, items: list) -> None:
-        """items: CollectionMod en el orden de la colección (los que se quieren instalar)."""
+    def install_collection(self, game: Game, domain: str, name: str, items: list, on_done=None) -> None:
+        """items: CollectionMod en el orden de la colección (los que se quieren instalar). on_done(fallidos)
+        se llama al terminar (no si se detiene)."""
         if self._queue:
             self.error(_('Ya hay una colección instalándose'), _('Espera a que termine «{0}».').format(self._queue['name']))
             return
         if not self.ctl.nexus.api_key:
             self.error(_('Falta la API key de Nexus Mods'), _('Ponla en Preferencias → Nexus Mods.'))
             return
-        self._queue = {"game": game, "domain": domain, "name": name, "items": items, "index": 0}
+        self._queue = {"game": game, "domain": domain, "name": name, "items": items, "index": 0, "failed": [],
+                       "on_done": on_done}
+        if not items:
+            self._queue_next(advance=False)
+            return
         self._queue_next(advance=False)
 
     def _queue_key(self):
@@ -472,16 +509,92 @@ class MainWindow(Adw.ApplicationWindow):
         if advance:
             q["index"] += 1
         if q["index"] >= len(q["items"]):
-            self.toast(_('«{0}»: {1} mods instalados. Pulsa «Aplicar» para llevarlos al juego.').format(q['name'], len(q['items'])), 8)
+            self._queue = None
+            done_n = len(q["items"]) - len(q["failed"])
+            notify.send(_("«{0}» terminada").format(q["name"]),
+                        _("{0}: {1} de {2} instalados").format(q["game"].name, done_n, len(q["items"])),
+                        key=f"queue-{q['game'].key}", game_key=q["game"].key)
+            if q["on_done"]:
+                q["on_done"](q["failed"])
+                return
+            ok = len(q["items"]) - len(q["failed"])
+            if q["failed"]:
+                lines = "\n".join(("• " + n + (_(" — no hace falta") if skip else "") + ": " + msg)
+                                  for n, msg, skip in q["failed"])
+                self.error(_("«{0}»: {1} de {2} mods instalados").format(q["name"], ok, len(q["items"])),
+                           lines + "\n\n" + _("Pulsa «Aplicar» para llevar al juego los instalados."))
+            else:
+                self.toast(_('«{0}»: {1} mods instalados. Pulsa «Aplicar» para llevarlos al juego.').format(q['name'], ok), 8)
             self._queue = None
             return
         it = q["items"][q["index"]]
         n, total = q["index"] + 1, len(q["items"])
-        if self.ctl.is_premium:
+        if it.kind == "bundle":
+            self._install_bundled(q, it)
+        elif it.kind == "loader":
+            self._install_loader(q, it)
+        elif self.ctl.is_premium:
             self.install_nxm(q["game"], NxmLink(q["domain"], it.mod_id, it.file_id, None, None))
         else:
             Gtk.UriLauncher.new(Nexus.file_page(q["domain"], it.mod_id, it.file_id) + "&nmm=1").launch(self, None, None)
             self.wait_for_nxm(q["game"], q["domain"], it.mod_id, it.file_id, f"{it.name} ({n}/{total})")
+
+    def _chooser(self, game: Game, item):
+        """Con las opciones FOMOD del autor de la colección se instala sin preguntar; si no, el asistente."""
+        from .fomod_dialog import make_chooser
+        saved = getattr(item, "fomod_choice", None)
+        if saved:
+            from .. import fomod
+            return lambda _module, _root, _prev: fomod.choice_from_json(saved)
+        opts = getattr(item, "fomod_options", None)
+        if opts:
+            from .. import fomod
+            return lambda module, _root, _prev: fomod.choice_from_collection(module, opts, game.install_dir)
+        return make_chooser(self, game.install_dir)
+
+    def _install_loader(self, q: dict, it) -> None:
+        """Un cargador de GitHub (BepInEx, UE4SS…) de una lista importada."""
+        from .. import loaders
+        game = q["game"]
+        ctx = manager.context(game)
+        task = self.taskbar.add(_('Instalando {0}').format(it.name))
+
+        def work():
+            if loaders.SPECS[it.loader].dest != "tool":
+                manager.ensure_closed(ctx)
+            with manager.game_lock(game):
+                return loaders.install(ctx, it.loader, task.update)
+        self._run_queued(q, it, task, work)
+
+    def _run_queued(self, q: dict, it, task, work) -> None:
+        game = q["game"]
+
+        def done(_rec):
+            task.done()
+            page = self.current_game_page(game)
+            if page:
+                page.refresh_installed()
+            self._queue_next(advance=True)
+
+        def fail(e):
+            task.done()
+            if self._queue is q:
+                q["failed"].append((it.name, str(e), isinstance(e, NotNeeded)))
+                self._queue_next(advance=True)
+        run_async(work, done, fail)
+
+    def _install_bundled(self, q: dict, it) -> None:
+        """Lo incluido en la colección no se descarga: sale del propio archivo de la colección."""
+        game = q["game"]
+        ctx = manager.context(game)
+        task = self.taskbar.add(_('Instalando {0}').format(it.name))
+        chooser = self._chooser(game, it)
+
+        def work():
+            with manager.game_lock(game):
+                return manager.install_bundled(ctx, Path(it.collection_archive), it.bundled, it.name, it.version,
+                                               task.update, chooser)
+        self._run_queued(q, it, task, work)
 
     # ---------- diálogos ----------
     def show_prefs(self) -> None:

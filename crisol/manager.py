@@ -4,6 +4,7 @@ Todo lo de aquí es bloqueante (red, disco): la interfaz lo llama desde hilos.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
@@ -22,7 +23,7 @@ from .games import Game
 from .layouts import LAYOUTS, Layout, LayoutError, detect
 from .providers.base import ProviderError
 from .providers.nexus import Nexus, NxmLink
-from .store import GameState, ModRecord
+from .store import GameState, ModRecord, _vkey, undo_overlays
 from .i18n import _
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,9 @@ class GameContext:
     @property
     def layout(self) -> Layout:
         cls = LAYOUTS.get(self.state.layout or "") or detect(self.game.install_dir, self.state.nexus_domain)
-        return cls(self.game.install_dir)
+        lay = cls(self.game.install_dir)
+        lay.game_key = self.game.key
+        return lay
 
     def plan(self, with_internal: bool = False) -> Plan:
         return make_plan(self.state, self.layout, with_internal)
@@ -57,7 +60,23 @@ class GameContext:
         return self.deployer.is_deployed()
 
     def loader(self):
-        return self.layout.loader(self.state.enabled_ordered(), self.state.staging)
+        layout = self.layout
+        # ME3 puede venir dentro de un mod aunque esté desactivado (p. ej. The Convergence): se busca en
+        # todos los instalados, igual que al lanzar el juego.
+        mods = self.state.ordered() if layout.external else self.state.enabled_ordered()
+        return layout.loader(mods, self.state.staging)
+
+    def game_updated(self) -> bool:
+        """¿Se ha actualizado el juego desde que se aplicaron los mods? (solo Steam: buildid)"""
+        if self.game.build and not self.state.applied_build and self.state.mods and self.is_applied():
+            self.mark_build()  # aplicados antes de que Crisol guardara la versión: se toma la actual
+        return bool(self.game.build and self.state.applied_build and self.state.mods and self.is_applied()
+                    and self.game.build != self.state.applied_build)
+
+    def mark_build(self) -> None:
+        """Los mods se han aplicado (o revisado) con la versión actual del juego."""
+        self.state.applied_build = self.game.build
+        self.state.save()
 
 
 _contexts: dict[str, GameContext] = {}
@@ -238,6 +257,7 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     layout = LAYOUTS[layout_id](ctx.game.install_dir) if layout_id else ctx.layout
     layout.keep_docs = bool(rec.fomod_name)
     layout.preferred_profile = rec.me3_variant
+    layout.ignore_paths = {k.lower() for k in ctx.deployer.manifest().get("files", {})}
     try:
         mapping = layout.map_files(tmp, rec.name)
     except LayoutError:
@@ -255,10 +275,113 @@ def install_archive(ctx: GameContext, archive_path: Path, rec: ModRecord, layout
     rec.archive = str(archive_path)
     rec.staged_size = dir_size(final)
     st.add(rec)
+    reapply_overlays(st, rec.uid)
     st.save()
     if progress:
         progress(1.0, _('Instalado'))
     return rec
+
+
+def install_bundled(ctx: GameContext, collection_archive: Path, bundled: str, name: str, version: str = "",
+                    progress: Progress | None = None, chooser: FomodChooser | None = None) -> ModRecord:
+    """Instala un archivo que viene dentro de la propia colección («bundle»: ajustes, parches del autor…)."""
+    from . import collection
+    st = ctx.state
+    rec = next((m for m in st.mods.values() if m.file_name == f"bundle:{bundled}"), None)
+    rec = rec or ModRecord(uid=st.new_uid(), name=name)
+    rec.provider, rec.version, rec.file_name = "local", version, f"bundle:{bundled}"
+    dest = paths.DOWNLOADS_DIR / "bundled" / collection_archive.stem
+    item = collection.Item(name=name, kind="bundle", bundled=bundled)
+    man = collection.Manifest(name, [item], collection_archive)
+    src = collection.extract_bundled(man, item, dest)
+    try:
+        return install_archive(ctx, src, rec, progress=progress, chooser=chooser)
+    except LayoutError:
+        if not ctx.layout.external:
+            raise
+    # Con ME3 cada mod se carga desde su carpeta: unos ajustes sueltos (.ini…) solo sirven junto al mod
+    # que los lee. Se ponen encima del archivo del mismo nombre de ese mod.
+    return _install_overlay(ctx, src, rec)
+
+
+def _install_overlay(ctx: GameContext, src: Path, rec: ModRecord) -> ModRecord:
+    st = ctx.state
+    if rec.uid in st.mods and rec.overlays:
+        undo_overlays(st, rec)
+    final = st.staging(rec.uid)
+    if final.exists():
+        shutil.rmtree(final)
+    shutil.copytree(src, final, ignore=shutil.ignore_patterns(".orig"))
+    others = [m for m in st.mods.values() if m.uid != rec.uid and not m.overlays]
+    overlays, skipped = [], []
+    for f in sorted(p for p in final.rglob("*") if p.is_file()):
+        rel = f.relative_to(final).as_posix()
+        hit = _overlay_target(st, others, rel)
+        if not hit:
+            skipped.append(rel)
+            continue
+        overlays.append([rel, hit[0], hit[1]])
+    if not overlays:
+        shutil.rmtree(final, ignore_errors=True)
+        raise LayoutError(_("Son ajustes para mods que no tienes instalados: instala antes esos mods."))
+    rec.overlays, rec.files, rec.skipped, rec.folders = overlays, [[a, f"{u}/{b}"] for a, u, b in overlays], skipped, []
+    rec.packages, rec.natives, rec.savefile, rec.layout = [], [], "", ctx.layout.id
+    rec.archive, rec.staged_size = str(src), dir_size(final)
+    st.add(rec)
+    apply_overlays(st, rec)
+    st.save()
+    return rec
+
+
+def _overlay_target(st, mods: list[ModRecord], rel: str) -> tuple[str, str] | None:
+    """(uid, ruta) del archivo de otro mod que más se parece a rel: mismo nombre y, a igualdad, más carpetas
+    en común por el final (dll/erfps_settings.ini → …/erfps/erfps_settings.ini)."""
+    parts = [x.lower() for x in rel.split("/")]
+    best, score = None, -1
+    for m in mods:
+        root = st.staging(m.uid)
+        for f in root.rglob(Path(rel).name) if root.is_dir() else ():
+            if f.is_file() and ".orig" not in f.relative_to(root).parts:
+                theirs = [x.lower() for x in f.relative_to(root).parts]
+                if theirs[-1] != parts[-1]:
+                    continue
+                n = 0
+                while n < min(len(parts), len(theirs)) and parts[-1 - n] == theirs[-1 - n]:
+                    n += 1
+                if n > score:
+                    best, score = (m.uid, f.relative_to(root).as_posix()), n
+    if best is None:  # rglob distingue mayúsculas: segunda pasada sin distinguirlas
+        name = parts[-1]
+        for m in mods:
+            root = st.staging(m.uid)
+            for f in root.rglob("*") if root.is_dir() else ():
+                if f.is_file() and f.name.lower() == name and ".orig" not in f.relative_to(root).parts:
+                    return m.uid, f.relative_to(root).as_posix()
+    return best
+
+
+def apply_overlays(st, rec: ModRecord) -> None:
+    """Copia los ajustes de rec sobre los otros mods (guardando antes sus originales en .orig)."""
+    root = st.staging(rec.uid)
+    for src, uid, rel in rec.overlays:
+        target = st.staging(uid) / rel
+        if not target.parent.is_dir():
+            continue
+        saved = root / ".orig" / uid / rel
+        if target.is_file() and not saved.exists():
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, saved)
+        shutil.copy2(root / src, target)
+
+
+def reapply_overlays(st, uid: str) -> None:
+    """Tras reinstalar o actualizar un mod, vuelven a ponerse encima los ajustes de colección que le tocaban."""
+    for rec in st.mods.values():
+        if any(u == uid for _s, u, _r in rec.overlays):
+            for _s, u, rel in rec.overlays:
+                if u == uid:
+                    (st.staging(rec.uid) / ".orig" / u / rel).unlink(missing_ok=True)
+            apply_overlays(st, rec)
 
 
 def dir_size(path: Path) -> int:
@@ -293,7 +416,9 @@ def delete_archive(ctx: GameContext, uid: str) -> int:
     """Borra el archivo descargado de un mod (ya extraído). Devuelve los bytes liberados."""
     rec = ctx.state.mods[uid]
     size = archive_size(rec)
-    if rec.archive:
+    if rec.archive and Path(rec.archive).is_dir():   # lo incluido en una colección (carpeta extraída)
+        shutil.rmtree(rec.archive, ignore_errors=True)
+    elif rec.archive:
         Path(rec.archive).unlink(missing_ok=True)
         Path(rec.archive + ".part").unlink(missing_ok=True)
     rec.archive = ""
@@ -375,20 +500,31 @@ def install_from_nxm(ctx: GameContext, nexus: Nexus, link: NxmLink, progress: Pr
 
 def missing_requirements(ctx: GameContext) -> dict[str, list[dict]]:
     """Requisitos de Nexus de los mods activos que no están instalados ni activos (por uid)."""
+    from .layouts import me3_redundant
     active_ids = {m.mod_id for m in ctx.state.enabled_ordered() if m.provider == "nexus"}
+    external = ctx.layout.external
     out: dict[str, list[dict]] = {}
     for m in ctx.state.enabled_ordered():
-        miss = [r for r in m.requirements if not r.get("external") and r.get("mod_id") and r["mod_id"] not in active_ids]
-        miss += [r for r in m.requirements if r.get("external")]  # externos: no se pueden comprobar
+        # Con ME3, «requisitos» como Elden Mod Loader o Mod Engine 2 no hacen falta: ME3 los sustituye.
+        reqs = [r for r in m.requirements if not (external and me3_redundant(r.get("name", "")))]
+        miss = [r for r in reqs if not r.get("external") and r.get("mod_id") and r["mod_id"] not in active_ids]
+        miss += [r for r in reqs if r.get("external")]  # externos: no se pueden comprobar
         if miss:
             out[m.uid] = miss
     return out
 
 
 def update_target(nexus: Nexus, rec: ModRecord):
-    """Archivo de Nexus con la versión nueva de un mod instalado (FileInfo) o None."""
-    files = [f for f in nexus.files(rec.game_domain, rec.mod_id)
-             if f.category in ("MAIN", "UPDATE", "OPTIONAL", "MISCELLANEOUS") and f.file_id != rec.file_id]
+    """Archivo de Nexus más nuevo que el instalado del mismo mod (FileInfo), o None si no lo hay.
+
+    Se mira la fecha de los archivos, no la versión de la página del mod: muchos autores no la cambian
+    (p. ej. «UE4SS for Lies of P» dice v1.0 en la página y su único archivo es v3.0.1)."""
+    all_files = nexus.files(rec.game_domain, rec.mod_id)
+    mine = next((f for f in all_files if f.file_id == rec.file_id), None)
+    since = mine.date if mine else 0
+    files = [f for f in all_files
+             if f.category in ("MAIN", "UPDATE", "OPTIONAL", "MISCELLANEOUS") and f.file_id != rec.file_id
+             and f.date > since]
     if not files:
         return None
     same = [f for f in files if rec.file_title and f.name == rec.file_title]
@@ -405,8 +541,17 @@ def check_updates(ctx: GameContext, nexus: Nexus) -> int:
     for domain, mods in by_domain.items():
         versions = nexus.latest_versions(domain, sorted({m.mod_id for m in mods}))
         for m in mods:
-            if m.mod_id in versions:
-                m.latest_version = versions[m.mod_id]
+            if m.mod_id not in versions:
+                continue
+            m.latest_version = versions[m.mod_id]
+            if m.version and _vkey(m.latest_version) != _vkey(m.version):
+                # La versión de la página es solo una pista: hay actualización si hay un archivo más nuevo.
+                try:
+                    target = update_target(nexus, m)
+                except ProviderError as e:
+                    log.info("no se pudieron mirar los archivos de %s: %s", m.name, e)
+                    continue
+                m.latest_version = (target.version or versions[m.mod_id]) if target else m.version
     ctx.state.updates_checked = time.time()
     ctx.state.save()
     return sum(1 for m in ctx.state.mods.values() if m.update_available)
@@ -444,13 +589,48 @@ def apply(ctx: GameContext, progress: Progress | None = None) -> Report:
             ctx.me3_profile.parent.mkdir(parents=True, exist_ok=True)
             ctx.me3_profile.write_text(layout.profile_text(mods, ctx.state.staging))
             ctx.state.dirty_deploy = False
-            ctx.state.save()
+            ctx.mark_build()
             return Report(placed=sum(len(m.packages) + len(m.natives) for m in mods), method=_("perfil ME3"))
-        return ctx.deployer.deploy(ctx.state, layout, progress)
+        report = ctx.deployer.deploy(ctx.state, layout, progress)
+        ctx.mark_build()
+        return report
 
 
-def me3_command(ctx: GameContext) -> list[str] | None:
-    """Orden para lanzar el juego con ME3 y el perfil de Crisol (None si falta ME3)."""
+@functools.lru_cache(maxsize=1)
+def deck_launches_me3() -> bool:
+    """¿Gaming Deck sabe arrancar ME3 cuando Steam lanza el juego? (pregunta a Crisol con --launch-command)"""
+    import shutil as _sh
+    import subprocess
+    deck = _sh.which("gaming-deck")
+    if not deck:
+        return False
+    try:
+        out = subprocess.run([deck, "help"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "launch-command" in out
+
+
+def launch_command(ctx: GameContext) -> list[str] | None:
+    """Para quien lanza el juego (Gaming Deck, desde Steam): la orden de ME3 si el juego tiene un perfil de
+    ME3 aplicado, o None para arrancarlo normal. Si hay cambios sin guardar, se guarda antes el perfil
+    (no toca el juego)."""
+    if not ctx.layout.external or not ctx.state.mods:
+        return None
+    if ctx.state.dirty_deploy and ctx.is_applied():
+        apply(ctx)
+    if not ctx.is_applied():
+        return None
+    return me3_command(ctx)
+
+
+def me3_command(ctx: GameContext, for_launch: bool = False) -> list[str] | None:
+    """Orden para lanzar el juego con ME3 y el perfil de Crisol (None si falta ME3).
+
+    for_launch: es para lanzarlo Crisol mismo. En juegos de Steam con Gaming Deck instalado se pasa por
+    «gaming-deck run --profile steam:<id> --», que aplica el perfil del juego (GameMode, MangoHud,
+    variables, FX…): ME3 arranca Proton por su cuenta y se saltaría las opciones de lanzamiento de Steam.
+    La línea para pegar en Steam (for_launch=False) no lo lleva: Steam ya pasa por Gaming Deck."""
     layout = ctx.layout
     if not layout.external:
         return None
@@ -463,6 +643,11 @@ def me3_command(ctx: GameContext) -> list[str] | None:
         cmd += ["--show-logos", "false"]
     if opts.get("no_boot_boost"):
         cmd += ["--no-boot-boost", "true"]
+    if for_launch and ctx.game.source == "steam":
+        import shutil as _sh
+        deck = _sh.which("gaming-deck")
+        if deck:
+            cmd = [deck, "run", "--profile", ctx.game.key, "--"] + cmd
     return cmd
 
 
@@ -484,6 +669,8 @@ def reinstall(ctx: GameContext, uid: str, progress: Progress | None = None,
     if ctx.layout.external:
         ensure_closed(ctx)  # con ME3 el juego lee los archivos del staging mientras está abierto
     path = Path(rec.archive)
+    if rec.overlays and path.is_dir():
+        return _install_overlay(ctx, path, rec)
     if not path.is_file():
         raise DownloadError(_('Ya no está el archivo descargado de este mod; vuelve a descargarlo.'))
     if not path.name.lower().endswith(archive.ARCHIVE_EXTS) and archive.sniff(path):
@@ -501,8 +688,12 @@ def remap(ctx: GameContext) -> list[str]:
     layout = ctx.layout
     failed = []
     for m in ctx.state.mods.values():
+        if m.overlays:
+            m.layout = layout.id
+            continue
         layout.keep_docs = bool(m.fomod_name)
         layout.preferred_profile = m.me3_variant
+        layout.ignore_paths = {k.lower() for k in ctx.deployer.manifest().get("files", {})}
         try:
             mp = layout.map_files(ctx.state.staging(m.uid), m.name)
         except LayoutError:

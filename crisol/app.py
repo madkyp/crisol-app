@@ -1,22 +1,18 @@
-"""Punto de entrada: aplicación GTK de instancia única que también recibe enlaces nxm://."""
+"""Punto de entrada: órdenes de terminal y, si no hay ninguna, la ventana (gui.py).
+
+Las órdenes sin ventana (--list, --play, --restore, --launch-command) no cargan GTK: Gaming Deck llama a
+--launch-command desde el entorno de Steam, cuyas librerías antiguas (LD_LIBRARY_PATH) rompen gi."""
 from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import logging
 import sys
-from pathlib import Path
 
-import gi
+from . import APP_NAME, VERSION, paths
+from .i18n import _
 
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
-
-from . import APP_ID, APP_NAME, VERSION, paths  # noqa: E402
-from .i18n import _  # noqa: E402
-
-HERE = Path(__file__).resolve().parent
 _OPEN_GAME: str | None = None
 log = logging.getLogger("crisol")
 
@@ -39,6 +35,26 @@ def cli(argv: list[str]) -> int | None:
     ap.add_argument("--restore", metavar="JUEGO", help=_("quitar los mods de un juego (clave de --list) sin abrir la ventana"))
     ap.add_argument("--play", metavar="JUEGO", help=_("jugar con los mods: ME3 en juegos de FromSoftware, Umbral en "
                                                       "los suyos, Steam en el resto"))
+    ap.add_argument("--launch-command", metavar="JUEGO",
+                    help=_("para lanzadores (Gaming Deck): la orden de ME3 en JSON si el juego tiene un perfil de "
+                           "ME3 aplicado; código 1 si se arranca normal"))
+    ap.add_argument("--export", metavar="JUEGO", help=_("lista de mods de un juego (para importarla en otro PC), "
+                                                         "en JSON por la salida estándar"))
+    ap.add_argument("--apply", metavar="JUEGO", help=_("aplicar los mods del perfil activo sin abrir la ventana "
+                                                        "(resultado en JSON; código 3 si el juego está abierto)"))
+    ap.add_argument("--enable", nargs=2, metavar=("JUEGO", "MOD"),
+                    help=_("activar un mod en el perfil activo (MOD: uid de --export o nombre exacto); no aplica"))
+    ap.add_argument("--disable", nargs=2, metavar=("JUEGO", "MOD"),
+                    help=_("desactivar un mod en el perfil activo (MOD: uid de --export o nombre exacto); no aplica"))
+    ap.add_argument("--profile", metavar="NOMBRE", help=_("con --apply: cambiar antes a ese perfil"))
+    ap.add_argument("--check-updates", metavar="JUEGO", nargs="?", const="all",
+                    help=_("buscar actualizaciones de mods en Nexus (de un juego o de todos), en JSON"))
+    ap.add_argument("--notify", action="store_true", help=_("con --check-updates: avisar con una notificación "
+                                                             "si hay mods con versión nueva"))
+    ap.add_argument("--backup", metavar="ARCHIVO", help=_("copia de seguridad de los datos de Crisol (.tar.gz; sin "
+                                                           "los mods ni la API key)"))
+    ap.add_argument("--with-saves", action="store_true", help=_("con --backup: incluir las copias de partidas"))
+    ap.add_argument("--restore-backup", metavar="ARCHIVO", help=_("restaurar una copia de seguridad de Crisol"))
     ap.add_argument("--game", metavar="JUEGO", help=_("abrir directamente la página de un juego (clave de --list)"))
     ap.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     ap.add_argument("uri", nargs="?", help=_("enlace nxm:// (lo pasa el navegador)"))
@@ -46,7 +62,33 @@ def cli(argv: list[str]) -> int | None:
     setup_logging(args.debug)
     global _OPEN_GAME
     _OPEN_GAME = args.game
-    if args.list or args.restore or args.play:
+    if args.launch_command:
+        from . import games as _games
+        from . import manager
+        # Rápido y sin red: Gaming Deck lo llama en cada lanzamiento desde Steam.
+        game = next((g for g in _games.scan_all() if g.key == args.launch_command), None)
+        cmd = manager.launch_command(manager.context(game)) if game else None
+        if not cmd:
+            return 1
+        manager.backup_saves(manager.context(game), _("antes de jugar con mods"))
+        print(json.dumps(cmd, ensure_ascii=False))
+        return 0
+    if args.backup or args.restore_backup:
+        from . import backup
+        try:
+            if args.backup:
+                m = backup.create(Path(args.backup).expanduser(), args.with_saves)
+                print(_("Copia guardada: {0} juegos en {1}").format(len(m["games"]), args.backup))
+            else:
+                r = backup.restore(Path(args.restore_backup).expanduser())
+                print(json.dumps({"restored": r.games, "lists_to_import": r.lists, "saves_added": r.saves,
+                                  "previous_data": r.safety}, indent=1, ensure_ascii=False))
+        except (backup.BackupError, OSError) as e:
+            print(e, file=sys.stderr)
+            return 1
+        return 0
+    toggle = args.enable or args.disable
+    if args.list or args.restore or args.play or args.export or args.apply or args.check_updates or toggle:
         from . import manager
         from .controller import Controller
         ctl = Controller()
@@ -54,12 +96,22 @@ def cli(argv: list[str]) -> int | None:
         if args.list:
             print(json.dumps([game_status(ctl, g) for g in games], indent=1, ensure_ascii=False))
             return 0
-        key = args.restore or args.play
+        if args.check_updates:
+            return check_updates_cli(ctl, games, args.check_updates, args.notify)
+        key = args.restore or args.play or args.export or args.apply or (toggle[0] if toggle else None)
         game = next((g for g in games if g.key == key), None)
         if not game:
             print(_("No existe el juego {0}").format(key), file=sys.stderr)
             return 2
         ctx = manager.context(game)
+        if toggle:
+            return toggle_cli(ctx, toggle[1], bool(args.enable))
+        if args.apply:
+            return apply_cli(ctx, args.profile)
+        if args.export:
+            from . import modlist
+            print(json.dumps(modlist.export(ctx), indent=1, ensure_ascii=False))
+            return 0
         if args.play:
             return play(ctx)
         r = manager.restore(ctx)
@@ -80,7 +132,91 @@ def game_status(ctl, g) -> dict:
             "nexus": ctl.domain(g), "layout": ctx.layout.id, "mods": len(st.mods), "enabled": len(st.profile.enabled),
             "profile": st.active, "applied": ctx.is_applied(), "pending_changes": st.dirty_deploy and bool(st.mods),
             "updates": sum(1 for m in st.mods.values() if m.update_available),
+            "game_updated": ctx.game_updated(), "profiles": list(st.profiles),
+            "updates_checked": int(st.updates_checked),
             "loader": {"name": ld.name, "level": ld.level, "installed": ld.installed} if ld else None}
+
+
+def apply_cli(ctx, profile: str | None) -> int:
+    """--apply: 0 bien, 2 perfil inexistente, 3 juego abierto, 1 otro error. Siempre JSON en la salida."""
+    from . import manager
+    from .running import GameRunning
+    st = ctx.state
+    if profile:
+        if profile not in st.profiles:
+            print(json.dumps({"ok": False, "error": _("No existe el perfil {0}").format(profile)}, ensure_ascii=False))
+            return 2
+        st.switch(profile)
+        st.save()
+    try:
+        r = manager.apply(ctx)
+    except GameRunning as e:
+        print(json.dumps({"ok": False, "error": str(e), "running": True}, ensure_ascii=False))
+        return 3
+    except Exception as e:  # noqa: BLE001 — se informa a quien llama
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "profile": st.active, "placed": r.placed, "removed": r.removed,
+                      "restored": r.restored, "method": r.method, "notes": r.notes}, ensure_ascii=False))
+    return 0
+
+
+def notify_updates(game_key: str, game_name: str, mods: list[str]) -> bool:
+    """Aviso de mods con versión nueva (una vez por cada lista distinta)."""
+    from . import notify
+    body = ", ".join(sorted(mods)[:4]) + ("…" if len(mods) > 4 else "")
+    title = (_("{0}: {1} mods con versión nueva") if len(mods) > 1 else _("{0}: 1 mod con versión nueva")).format(
+        game_name, len(mods))
+    return notify.send(title, body, key=f"updates-{game_key}", game_key=game_key,
+                       once=(f"updates:{game_key}", "|".join(sorted(mods))))
+
+
+def toggle_cli(ctx, mod: str, on: bool) -> int:
+    """--enable/--disable: solo cambia el perfil activo (como la casilla de la ventana); los archivos del juego
+    no se tocan hasta --apply. 0 bien, 1 error, 2 no existe el mod (o el nombre es ambiguo)."""
+    st = ctx.state
+    rec = st.mods.get(mod)
+    if rec is None:
+        same = [m for m in st.mods.values() if m.name == mod]
+        if len(same) > 1:
+            print(json.dumps({"ok": False, "error": _("Hay varios mods con ese nombre: usa el uid de --export")},
+                             ensure_ascii=False))
+            return 2
+        rec = same[0] if same else None
+    if rec is None:
+        print(json.dumps({"ok": False, "error": _("No existe el mod {0}").format(mod)}, ensure_ascii=False))
+        return 2
+    try:
+        st.set_enabled(rec.uid, on)
+        st.save()
+    except Exception as e:  # noqa: BLE001
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "uid": rec.uid, "name": rec.name, "enabled": st.is_enabled(rec.uid),
+                      "profile": st.active, "pending_changes": st.dirty_deploy}, ensure_ascii=False))
+    return 0
+
+
+def check_updates_cli(ctl, games, which: str, notify_user: bool = False) -> int:
+    from . import manager
+    out = {}
+    for g in games:
+        if which != "all" and g.key != which:
+            continue
+        ctx = manager.context(g)
+        if not any(m.provider == "nexus" for m in ctx.state.mods.values()):
+            continue
+        try:
+            out[g.key] = {"name": g.name, "updates": manager.check_updates(ctx, ctl.nexus),
+                          "mods": [m.name for m in ctx.state.mods.values() if m.update_available]}
+        except Exception as e:  # noqa: BLE001
+            out[g.key] = {"name": g.name, "error": str(e)}
+    if notify_user:
+        for key, v in out.items():
+            if v.get("mods"):
+                notify_updates(key, v["name"], v["mods"])
+    print(json.dumps(out, indent=1, ensure_ascii=False))
+    return 0 if all("error" not in v for v in out.values()) else 1
 
 
 def play(ctx) -> int:
@@ -89,10 +225,15 @@ def play(ctx) -> int:
     import subprocess
     from . import manager
     game = ctx.game
-    if ctx.layout.external:
+    if ctx.layout.external and game.source == "steam" and manager.deck_launches_me3():
+        # A través de Steam: Steam Input configura el mando y Gaming Deck arranca ME3 con su perfil.
+        if ctx.state.dirty_deploy or not ctx.is_applied():
+            manager.apply(ctx)
+        cmd = ["xdg-open", f"steam://rungameid/{game.source_id}"]
+    elif ctx.layout.external:
         if ctx.state.dirty_deploy or not ctx.is_applied():
             manager.apply(ctx)  # guardar el perfil de ME3 con lo activo ahora
-        cmd = manager.me3_command(ctx)
+        cmd = manager.me3_command(ctx, for_launch=True)
         if not cmd:
             print(_("Falta Mod Engine 3 (ME3)"), file=sys.stderr)
             return 1
@@ -110,69 +251,11 @@ def play(ctx) -> int:
     return 0
 
 
-class CrisolApp(Adw.Application):
-    def __init__(self):
-        super().__init__(application_id=APP_ID,
-                         flags=Gio.ApplicationFlags.HANDLES_OPEN)
-        self.win = None
-        self._pending: list[str] = []
-        self.accent_css = Gtk.CssProvider()
-
-    def do_startup(self):
-        Adw.Application.do_startup(self)
-        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        display = Gdk.Display.get_default()
-        css = Gtk.CssProvider()
-        css.load_from_path(str(HERE / "ui" / "style.css"))
-        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        Gtk.StyleContext.add_provider_for_display(display, self.accent_css, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
-        quit_ = Gio.SimpleAction.new("quit", None)
-        quit_.connect("activate", lambda *_u: self.quit())
-        self.add_action(quit_)
-        self.set_accels_for_action("app.quit", ["<Ctrl>q"])
-
-    def set_accent(self, color: str) -> None:
-        # Los temas de GTK del usuario (p. ej. Catppuccin de HyDE) redefinen el acento con prioridad de
-        # usuario; el de Crisol va por encima para que la opción de Preferencias se respete.
-        self.accent_css.load_from_string(
-            f"@define-color accent_bg_color {color};\n@define-color accent_color {color};\n"
-            f"@define-color accent_fg_color white;\n"
-            f":root {{ --accent-bg-color: {color}; --accent-fg-color: white; }}\n"
-            # El tema puede pintar estos widgets con colores fijos en vez de con la variable.
-            f"button.suggested-action, splitbutton.suggested-action > button {{ background-color: {color}; color: white; }}\n"
-            f"button.suggested-action:hover {{ background-color: color-mix(in srgb, {color} 88%, white); }}\n"
-            f"button.suggested-action:active {{ background-color: color-mix(in srgb, {color} 80%, black); }}\n"
-            f"button.suggested-action:disabled {{ background-color: alpha({color}, 0.35); color: alpha(white, 0.5); }}\n"
-            f"switch:checked {{ background-color: {color}; }}\n"
-            f"check:checked, radio:checked {{ background-color: {color}; color: white; }}\n"
-            f"progressbar > trough > progress {{ background-color: {color}; }}\n"
-            f"spinner, .spinner {{ color: {color}; }}\n")
-
-    def _window(self):
-        if self.win is None:
-            from .controller import Controller
-            from .ui.window import MainWindow
-            ctl = Controller()
-            self.set_accent(ctl.cfg.accent)
-            self.win = MainWindow(self, ctl, open_game=_OPEN_GAME)
-        return self.win
-
-    def do_activate(self):
-        self._window().present()
-
-    def do_open(self, files, n_files, hint):
-        win = self._window()
-        win.present()
-        for f in files:
-            uri = f.get_uri()
-            if uri.lower().startswith("nxm:"):
-                win.handle_nxm(uri)
-
-
 def main(argv: list[str]) -> int:
     code = cli(argv)
     if code is not None:
         return code
     # GApplication no entiende nuestras opciones: solo se le pasa el enlace nxm, si lo hay.
     passthrough = [argv[0]] + [a for a in argv[1:] if a.lower().startswith("nxm:")]
-    return CrisolApp().run(passthrough)
+    from .gui import CrisolApp  # GTK solo para la ventana (ver gui.py)
+    return CrisolApp(_OPEN_GAME).run(passthrough)

@@ -38,6 +38,10 @@ def extract(archive: Path, dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
+    if archive.is_dir():
+        # Una carpeta (p. ej. los archivos incluidos en una colección de Nexus): se copia tal cual.
+        shutil.copytree(archive, dest, dirs_exist_ok=True)
+        return
     if not is_archive(archive):
         # Un .pak u otro archivo suelto: se trata como mod de un solo archivo.
         shutil.copy2(archive, dest / archive.name)

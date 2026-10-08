@@ -100,6 +100,12 @@ class FomodTest(unittest.TestCase):
         self.assertIsNotNone(fomod.validate_group(m.steps[0].groups[0], set()))
         self.assertIsNone(fomod.validate_group(m.steps[0].groups[0], {1}))
         self.assertEqual(fomod.choice_from_json(fomod.choice_to_json(choice)), choice)
+        # Opciones de una colección de Nexus (formato de Vortex): por nombre o, si no, por posición.
+        col = [{"name": "Estilo", "groups": [{"name": "Textura", "choices": [{"name": "2K", "idx": 0}]},
+                                             {"name": "Extras", "choices": [{"name": "nombre viejo", "idx": 0}]}]}]
+        c2 = fomod.choice_from_collection(m, col)
+        self.assertEqual((c2[(0, 0)], c2[(0, 1)]), ({0}, {0}))
+        self.assertEqual(fomod.visible_steps(m, c2), [0])           # con 2K el paso «Solo 4K» no aparece
 
 
 if __name__ == "__main__":

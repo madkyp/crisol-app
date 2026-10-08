@@ -52,15 +52,19 @@ Using **ELDEN RING** + **The Convergence** as the example (interface in Spanish;
 - **Premium accounts** download directly. **Free accounts** start the download on the website (*Slow download*) and the browser hands the `nxm://` link to Crisol, which downloads it, **checks size and md5 against Nexus**, extracts it (zip, 7z, rar…) and installs it. Archives downloaded by hand can be imported too.
 - Downloads that get cut off **resume** where they stopped next time you press *Slow download*.
 - **FOMOD installers** (the options wizard many Nexus mods ship): steps, groups, required / recommended / unavailable options, conditional steps and files. Your choices are kept for reinstalls and updates, and *Change installer options…* runs it again.
-- **Collections**: each game's Nexus collections with their mods; install the ones you tick, in the collection's order (Premium: one after another by itself; free: Crisol opens each mod's download page in turn and moves on as soon as its link arrives).
+- **Collections**: each game's Nexus collections with their mods; install the ones you tick (Premium: one after another by itself; free: Crisol opens each mod's download page in turn and moves on as soon as its link arrives). With your API key Crisol reads the **full collection manifest**: the author's install order and rules, the **author's FOMOD choices** (no wizard), files **bundled** in the collection (e.g. preset `.ini` settings — on ME3 games they are placed next to the mod that reads them) and off-site mods with their link and instructions. A mod that fails is noted and the queue goes on.
+- **Endorse** mods on Nexus from the mod's ⋮ menu; endorsed mods show a ★.
 
 ### 🔄 Updates
 - Crisol checks for new versions of your installed mods when it starts (at most every 12 h per game). The library marks games with updates.
-- **Update to vX** finds the new file of that same mod on Nexus and installs it **in place**, keeping its position and state in every profile; **Update all** does the whole game.
+- **Update to vX** finds the new file of that same mod on Nexus and installs it **in place**, keeping its position and state in every profile; **Update all** does the whole game. Only a newer *file* counts as an update (the version on the mod page is just a hint).
+- **Game updated**: when Steam updates a game after you applied mods, its card and page warn you to check that the mods still work.
+- **Desktop notifications** (optional): mod or collection installed, mods with a new version, game updated. A **background check** every 12 h (a systemd user timer) can notify you even with Crisol closed.
 
 ### 🧩 Load order
 - Drag and drop, enable / disable without uninstalling, **profiles** per game.
-- **Conflicts**: which files two mods both ship and which one wins with the current order (also duplicates inside KCD2 `.pak` files).
+- **Conflicts**: which files two mods both ship and which one wins with the current order (also duplicates inside KCD2 `.pak` files). For loose files you can **pick the winner per file**, regardless of the order; the choice is kept per profile.
+- **Search, filter and notes** in the installed list: filter by enabled, disabled, with update, with conflicts, missing something or with a note; add a note to any mod.
 - Missing **requirements** are flagged.
 - **Disk space** per mod and per game; delete the downloaded archives (one or all) or choose not to keep them at all.
 
@@ -71,8 +75,12 @@ Using **ELDEN RING** + **The Convergence** as the example (interface in Spanish;
 - **Never while the game is running**: applying, restoring or reinstalling is blocked while the game is open (Steam's launch process, Proton `.exe` processes in the game folder, Umbral's `running.json`).
 - **Save backups**: before applying mods or playing with them, Crisol copies the game's saves (found in the Proton prefix and the game folder: `steam_autocloud.vdf`, `.sav`, `.sl2`, `Saved`/`SaveGames` folders…). The last 5 are kept and can be restored from *Game settings → Saves*.
 
+### 💾 Mod lists and backups
+- **Export / import a mod list** (game ⋯ menu): mods with their exact Nexus file, order, enabled state, FOMOD choices, ME3 variant, conflict winners and notes, in a small `.json`. Importing it on another PC downloads what is missing with the same installer options and creates a new profile with that order — your profiles are left alone.
+- **Backup** (*Preferences → Backup*): settings, every game's state and mod list, and what Crisol needs to restore the game folders, optionally with save backups. It does not include the mods (they are downloaded again) or your API key. Restoring brings back the games whose mods are on this PC; for the rest the game page offers to **import** the list.
+
 ### 🔧 Mod loader check
-Every game page says whether the game needs a mod loader — **required**, **depends on the mod** or **not needed** — whether it is installed, and links the loaders published for that game on Nexus. Before downloading, a mod's page warns when its requirements ask for a loader you don't have.
+Every game page says whether the game needs a mod loader — **required**, **depends on the mod** or **not needed** — whether it is installed, links the loaders published for that game on Nexus and can **install the official loader in one click** (BepInEx, MelonLoader, UE4SS or ME3 from their GitHub releases; a loader made for that game on Nexus is suggested first). Under Proton it tells you the `WINEDLLOVERRIDES` the loader needs (in Gaming Deck's game profile if you use it — and stays quiet once it is there). Before downloading, a mod's page warns when its requirements ask for a loader you don't have.
 
 | Game type | Games | How mods are applied and ordered | Loader |
 |---|---|---|---|
@@ -118,6 +126,12 @@ Dependencies: `python python-gobject python-requests gtk4 libadwaita libsecret l
 | `crisol --play <key>` | Play with mods: ME3 for FromSoftware games, Umbral for its games, Steam for the rest |
 | `crisol --game <key>` | Open a game's page directly |
 | `crisol --restore <key>` | Remove a game's mods without opening the window |
+| `crisol --apply <key> [--profile <name>]` | Apply a game's mods (optionally switching profile first); JSON result, exit code 3 if the game is running |
+| `crisol --enable <key> <mod>` / `--disable <key> <mod>` | Enable / disable a mod (uid from `--export` or exact name) in the active profile, without applying |
+| `crisol --check-updates [<key>] [--notify]` | Look for mod updates on Nexus (one game or all), as JSON; `--notify` sends a desktop notification |
+| `crisol --export <key>` | A game's mod list as JSON (the same file *Export mod list* saves) |
+| `crisol --backup <file> [--with-saves]` / `--restore-backup <file>` | Back up / restore Crisol's data |
+| `crisol --launch-command <key>` | For launchers: the ME3 command as JSON if the game has an applied ME3 profile (exit 1 to start it normally) |
 | `crisol --debug` | Detailed log in the terminal (always written to `~/.local/state/crisol/logs/crisol.log`) |
 
 ## 📁 Files
@@ -131,6 +145,9 @@ Dependencies: `python python-gobject python-requests gtk4 libadwaita libsecret l
 | `~/.local/share/crisol/deploy/`, `backups/` | What is applied to each game and the originals it replaced |
 | `~/.local/share/crisol/me3/` | Generated Mod Engine 3 profiles |
 | `~/.local/share/crisol/saves/` | Save backups (last 5 per game) |
+| `~/.local/share/crisol/tools/me3/` | Mod Engine 3, when installed from the loader card |
+| `~/.local/share/crisol/restored/`, `restore-backups/` | Mod lists from a restored backup waiting to be imported; the data that was there before each restore |
+| `~/.cache/crisol/collections/` | Collection manifests |
 
 ## 🌐 Mod sources
 
@@ -149,14 +166,15 @@ Crisol follows the [Nexus Mods API acceptable use policy](https://help.nexusmods
 Crisol works with the author's other apps, and both use the same game keys (`steam:<appid>`, `umbral:<id>`):
 
 - **[Umbral](https://github.com/madkyp/umbral-project)** (≥ 0.14.2): each game's ⋯ menu has **Mods (Crisol)**. Mods Crisol applies are in the game folder, so Umbral's **Play** already uses them. Crisol also reads Umbral's `running.json` so it never changes the files of a running game.
-- **[Gaming Deck](https://github.com/madkyp/gaming-deck)** (formerly the GAMING tab of Control Deck): each game's page shows a **MODS** card (mods on, profile, pending changes, updates, missing loader) with **PLAY WITH MODS** and **OPEN IN CRISOL**.
+- **[Gaming Deck](https://github.com/madkyp/gaming-deck)** (formerly the GAMING tab of Control Deck): each game's page shows a **MODS** card (mods on, profile, pending changes, updates, game updated, missing loader) with a profile picker and **APPLY**, **LOOK FOR UPDATES**, **PLAY WITH MODS** and **OPEN IN CRISOL**. For ME3 games, `gaming-deck run %command%` in Steam's launch options starts the game through ME3 with the game profile's environment (`crisol --launch-command`).
+  - *Controller with ME3:* ME3 starts the game in its own container; if a pad does not respond, turn Steam Input **on** for the game and add `SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0x28DE/0x0000` to the game's ENV in Gaming Deck.
 
-Other apps can use the same: `crisol --list` prints, for each game, `key, name, source, id, dir, nexus, layout, mods, enabled, profile, applied, pending_changes, updates, loader {name, level, installed}` (it doesn't wait for the network); `crisol --game <key>` opens a game; `crisol --play <key>` plays it with mods.
+Other apps can use the same: `crisol --list` prints, for each game, `key, name, source, id, dir, nexus, layout, mods, enabled, profile, profiles, applied, pending_changes, updates, updates_checked, game_updated, loader {name, level, installed}` (it doesn't wait for the network); `crisol --game <key>` opens a game; `crisol --play <key>` plays it with mods.
 
 ## 🧪 Tests
 
 ```sh
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -t . -v
 ```
 
 They build fake games of every type (KCD2, Unreal, loose files, ME3), install mods (FOMOD included), reorder, check conflicts and verify that restoring leaves the folder exactly as it was; they also cover resumed downloads (local HTTP server with and without `Range`), running-game detection, save backups, and that every text has its English translation.

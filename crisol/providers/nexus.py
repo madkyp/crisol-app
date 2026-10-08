@@ -103,12 +103,13 @@ class Nexus(ModProvider):
             raise last
         raise ProviderError(_('Nexus Mods no responde ahora mismo (se ha intentado 3 veces). Prueba en un rato.'))
 
-    def _v1(self, path: str, key_required: bool = True) -> object:
+    def _v1(self, path: str, key_required: bool = True, post: dict | None = None) -> object:
         if key_required and not self.api_key:
             raise AuthError(_('Falta la API key de Nexus Mods (Preferencias → Nexus Mods).'))
         headers = {"APIKEY": self.api_key} if self.api_key else {}
         try:
-            r = self.session.get(V1 + path, headers=headers, timeout=20)
+            r = (self.session.post(V1 + path, headers=headers, json=post, timeout=20) if post is not None
+                 else self.session.get(V1 + path, headers=headers, timeout=20))
         except requests.RequestException as e:
             raise ProviderError(_('No se pudo conectar con Nexus Mods: {0}').format(e)) from e
         with self._lock:
@@ -134,6 +135,38 @@ class Nexus(ModProvider):
     def validate_key(self) -> dict:
         """{name, is_premium, …}. Lanza AuthError si la clave no vale."""
         return self._v1("/users/validate.json")  # type: ignore[return-value]
+
+    def endorsements(self, game_domain: str, mod_ids: list[int]) -> dict[tuple[str, int], str]:
+        """{(dominio, mod_id): "Endorsed" | "Abstained" | "Undecided"} de esos mods para la cuenta.
+
+        Se pregunta mod a mod: el listado /user/endorsements.json de Nexus sale vacío aunque haya recomendaciones."""
+        out = {}
+        for mid in mod_ids:
+            try:
+                info = self._v1(f"/games/{game_domain}/mods/{mid}.json")
+            except NotFound:
+                continue
+            status = ((info or {}).get("endorsement") or {}).get("endorse_status")  # type: ignore[union-attr]
+            if status:
+                out[(game_domain, mid)] = str(status)
+        return out
+
+    def endorse(self, game_domain: str, mod_id: int, version: str, on: bool = True) -> str:
+        """Recomendar (endorse) un mod o retirar la recomendación. Devuelve el estado nuevo."""
+        what = "endorse" if on else "abstain"
+        try:
+            r = self._v1(f"/games/{game_domain}/mods/{mod_id}/{what}.json", post={"Version": version or ""})
+        except ProviderError as e:
+            msg = str(e)
+            for code, text in (
+                    ("NOT_DOWNLOADED_MOD", _("Nexus Mods solo deja recomendar mods que has descargado con tu cuenta.")),
+                    ("TOO_SOON_AFTER_DOWNLOAD", _("Nexus Mods pide esperar un poco después de descargar un mod antes "
+                                                  "de recomendarlo. Prueba más tarde.")),
+                    ("IS_OWN_MOD", _("No puedes recomendar un mod tuyo."))):
+                if code in msg:
+                    raise ProviderError(text) from e
+            raise
+        return str((r or {}).get("status") or ("Endorsed" if on else "Abstained"))  # type: ignore[union-attr]
 
     # ---------- juegos ----------
     def games(self, refresh: bool = True) -> list[dict]:
