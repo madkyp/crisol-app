@@ -41,8 +41,10 @@ class EndorseTest(unittest.TestCase):
         self.assertEqual(n.endorse("eldenring", 510, "2.0.1", on=False), "Abstained")
         self.assertTrue(n.session.post.call_args[0][0].endswith("/abstain.json"))
         n.session.post.return_value = self._resp(403, {"message": "NOT_DOWNLOADED_MOD"})
-        with self.assertRaisesRegex(ProviderError, "descargado"):
+        from crisol.i18n import _
+        with self.assertRaises(ProviderError) as cm:
             n.endorse("eldenring", 510, "2.0.1")
+        self.assertEqual(str(cm.exception), _("Nexus Mods solo deja recomendar mods que has descargado con tu cuenta."))
         n.session.get.return_value = self._resp(200, {"name": "x", "endorsement": {"endorse_status": "Endorsed"}})
         self.assertEqual(n.endorsements("eldenring", [510]), {("eldenring", 510): "Endorsed"})
 
